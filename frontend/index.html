@@ -75,10 +75,25 @@
             </select>
           </label>
           <label class="backendField">
+            Тип бэкенда
+            <select id="backendType">
+              <option value="railway" selected>Railway (работает)</option>
+              <option value="yandex">Yandex Cloud Functions</option>
+            </select>
+            <div class="hint">Выберите платформу для бэкенда</div>
+          </label>
+        </div>
+        
+        <div class="formGrid">
+          <label class="backendField full">
             API сервера
             <input id="backendUrl" type="url" value="http://127.0.0.1:8000" />
-            <div class="hint">Для облачного использования укажите публичный URL</div>
+            <div class="hint">URL вашего бэкенда. Изменится автоматически при смене типа</div>
           </label>
+        </div>
+        
+        <div id="backendInfo" class="infoBox">
+          <!-- Динамически заполняется app.js -->
         </div>
 
         <div class="actions">

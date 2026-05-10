@@ -510,6 +510,59 @@ details summary {
   text-decoration: underline;
 }
 
+/* Стили для блока информации о бэкенде */
+.backend-info {
+  padding: 16px;
+  border-radius: 16px;
+  margin: 12px 0;
+}
+
+.backend-info.railway {
+  background: rgba(255, 197, 87, 0.1);
+  border: 1px solid rgba(255, 197, 87, 0.3);
+}
+
+.backend-info.yandex {
+  background: rgba(109, 93, 252, 0.1);
+  border: 1px solid rgba(109, 93, 252, 0.3);
+}
+
+.backend-info strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 1.1rem;
+}
+
+.backend-info p {
+  margin: 8px 0 12px;
+  color: #52627a;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.smallBtn {
+  min-height: 36px;
+  padding: 8px 14px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid #d9e3f2;
+  color: #384760;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.smallBtn:hover {
+  background: #f8fbff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(49, 59, 84, 0.1);
+}
+
+.backendField.full {
+  grid-column: 1 / -1;
+}
+
 @media (max-width: 760px) {
   .hero,
   .formGrid,

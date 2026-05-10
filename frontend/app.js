@@ -3,25 +3,83 @@ const state = {
   recognition: null,
   progressTimer: null,
   backendUrl: "",
+  backendType: "railway", // "railway" или "yandex"
 };
 
 function getDefaultBackendUrl() {
-  // Для production используем Railway
+  // Для production используем Railway (работает)
   return "https://ruwiki-backend-production.up.railway.app";
+}
+
+function getYandexFunctionUrl() {
+  // URL функции Yandex Cloud Functions (нужно заменить после развертывания)
+  return "https://functions.yandexcloud.net/your-function-id";
 }
 
 function initializeBackendUrl() {
   const savedUrl = localStorage.getItem('ruwiki_backend_url');
-  const defaultUrl = getDefaultBackendUrl();
-  const url = savedUrl || defaultUrl;
+  const savedType = localStorage.getItem('ruwiki_backend_type') || "railway";
+  let url;
+  
+  if (savedUrl) {
+    url = savedUrl;
+    state.backendType = savedType;
+  } else {
+    state.backendType = "railway";
+    url = getDefaultBackendUrl();
+  }
+  
   $('#backendUrl').val(url);
+  $('#backendType').val(state.backendType);
   state.backendUrl = url;
+  updateBackendInfo();
   return url;
 }
 
-function saveBackendUrl(url) {
+function saveBackendUrl(url, type) {
   localStorage.setItem('ruwiki_backend_url', url);
+  localStorage.setItem('ruwiki_backend_type', type);
   state.backendUrl = url;
+  state.backendType = type;
+}
+
+function updateBackendInfo() {
+  const type = state.backendType;
+  const $info = $('#backendInfo');
+  
+  if (type === "railway") {
+    $info.html(`
+      <div class="backend-info railway">
+        <strong>🚂 Railway Backend</strong>
+        <p>Бэкенд развернут на Railway. Для использования сервисов Яндекса настройте Yandex Cloud Functions.</p>
+        <button id="switchToYandex" class="smallBtn">Перейти на Yandex Cloud Functions</button>
+      </div>
+    `);
+  } else {
+    $info.html(`
+      <div class="backend-info yandex">
+        <strong>☁️ Yandex Cloud Functions</strong>
+        <p>Бэкенд развернут на Yandex Cloud Functions. Используется грант SourceCraft.</p>
+        <button id="switchToRailway" class="smallBtn">Вернуться на Railway</button>
+      </div>
+    `);
+  }
+  
+  $('#switchToYandex').on('click', () => {
+    $('#backendUrl').val(getYandexFunctionUrl());
+    $('#backendType').val("yandex");
+    saveBackendUrl(getYandexFunctionUrl(), "yandex");
+    updateBackendInfo();
+    checkHealth();
+  });
+  
+  $('#switchToRailway').on('click', () => {
+    $('#backendUrl').val(getDefaultBackendUrl());
+    $('#backendType').val("railway");
+    saveBackendUrl(getDefaultBackendUrl(), "railway");
+    updateBackendInfo();
+    checkHealth();
+  });
 }
 
 function setBusy(isBusy, message = "") {
@@ -113,6 +171,7 @@ function renderResult(data) {
 
 async function simplify() {
   const backendUrl = $("#backendUrl").val().replace(/\/$/, "");
+  const backendType = $("#backendType").val();
   const query = $("#query").val().trim();
   const age = Number($("#age").val());
   const mode = $("#mode").val();
@@ -124,7 +183,7 @@ async function simplify() {
   }
 
   // Сохраняем URL backend
-  saveBackendUrl(backendUrl);
+  saveBackendUrl(backendUrl, backendType);
 
   setBusy(true, "Ищу статью в Рувики...");
   try {
@@ -243,7 +302,23 @@ $(function () {
   $("#copyBtn").on("click", copyResult);
   $("#clearBtn").on("click", clearCache);
   $("#backendUrl").on("change", function() {
-    saveBackendUrl($(this).val().replace(/\/$/, ""));
+    const url = $(this).val().replace(/\/$/, "");
+    const type = $("#backendType").val();
+    saveBackendUrl(url, type);
+    checkHealth();
+  });
+  
+  $("#backendType").on("change", function() {
+    const type = $(this).val();
+    let url;
+    if (type === "yandex") {
+      url = getYandexFunctionUrl();
+    } else {
+      url = getDefaultBackendUrl();
+    }
+    $("#backendUrl").val(url);
+    saveBackendUrl(url, type);
+    updateBackendInfo();
     checkHealth();
   });
   
@@ -273,7 +348,7 @@ $(function () {
   
   // Показать подсказку при первом посещении
   if (!localStorage.getItem('ruwiki_first_visit')) {
-    $("#status").text("Введите тему или нажмите на пример выше. Backend развернут на Railway.");
+    $("#status").text("Введите тему или нажмите на пример выше. Backend развернут на Railway. Для использования Yandex Cloud Functions настройте сервисное подключение.");
     localStorage.setItem('ruwiki_first_visit', 'true');
   }
 });

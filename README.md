@@ -8,7 +8,7 @@
 
 ### 🌐 Онлайн-демо
 - **Frontend**: https://folomkin-ivan.sourcecraft.site/ruwiki-explain (после публикации)
-- **Backend**: Требуется развертывание на Yandex Cloud Functions или аналогичном сервисе
+- **Backend**: Работает на Railway, можно переключить на Yandex Cloud Functions
 
 ### ✨ Ключевые возможности MVP
 - **Профессиональный интерфейс** — современный дизайн, адаптивная верстка
@@ -44,44 +44,47 @@
 ### 2. Развертывание бэкенда
 Бэкенд требует развертывания на облачной платформе:
 
-#### Вариант A: Yandex Cloud Functions (рекомендуется с грантом)
-```bash
-cd backend
-# Установите Yandex Cloud CLI
-yc serverless function create --name ruwiki-backend
-yc serverless function version create \
-  --function-name ruwiki-backend \
-  --runtime python311 \
-  --entrypoint app.main.app \
-  --memory 256m \
-  --execution-timeout 30s \
-  --source-path . \
-  --environment "LLM_API_KEY=your_key,LLM_PROVIDER=openai_compatible,..."
-```
+#### Вариант A: Railway (работает из коробки)
+Бэкенд уже развернут на Railway и доступен по адресу: `https://ruwiki-backend-production.up.railway.app`
 
-#### Вариант B: Любой хостинг с поддержкой Python
+Фронтенд по умолчанию использует этот URL. Для переключения на Yandex Cloud Functions используйте выпадающий список "Тип бэкенда" в интерфейсе.
+
+#### Вариант B: Yandex Cloud Functions (рекомендуется с грантом)
+Для развертывания на Yandex Cloud Functions через SourceCraft CI/CD:
+
+1. **Настройте сервисное подключение в SourceCraft**:
+   - Создайте сервисный аккаунт в Yandex Cloud с ролью `functions.admin`
+   - В SourceCraft создайте сервисное подключение с этим сервисным аккаунтом
+   - Назовите его `default-service-connection` или обновите `.sourcecraft/ci.yaml`
+
+2. **Настройте CI/CD**:
+   - Конфигурация CI/CD уже готова в `.sourcecraft/ci.yaml`
+   - При пуше в ветку `main` будет запущен workflow `deploy-backend`
+   - Workflow создаст функцию `ruwiki-backend` в Yandex Cloud Functions
+
+3. **Получите URL функции**:
+   - После успешного развертывания получите URL функции из логов CI/CD
+   - URL имеет вид: `https://functions.yandexcloud.net/{function_id}`
+   - Введите этот URL в поле "API сервера" в интерфейсе
+
+4. **Настройте Yandex AI Studio**:
+   - Получите грант SourceCraft на Yandex Cloud
+   - Активируйте Yandex Foundation Models в консоли
+   - Создайте API-ключ для доступа к моделям
+   - Обновите `backend/.env`:
+     ```env
+     LLM_PROVIDER=openai_compatible
+     LLM_MODEL=yandexgpt-3
+     LLM_BASE_URL=https://llm.api.cloud.yandex.net/foundationModels/v1
+     LLM_API_KEY=ваш_ключ_здесь
+     ```
+
+#### Вариант C: Любой хостинг с поддержкой Python
 - Railway, Render, Fly.io, PythonAnywhere
 - Требуется Python 3.11+ и установка зависимостей
 
-### 3. Настройка Yandex AI Studio
-1. Получите грант SourceCraft на Yandex Cloud
-2. Активируйте Yandex Foundation Models в консоли
-3. Создайте API-ключ для доступа к моделям
-4. Обновите `backend/.env`:
-   ```env
-   LLM_PROVIDER=openai_compatible
-   LLM_MODEL=yandexgpt-3
-   LLM_BASE_URL=https://llm.api.cloud.yandex.net/foundationModels/v1
-   LLM_API_KEY=ваш_ключ_здесь
-   ```
-
-### 4. Настройка фронтенда
-После развертывания бэкенда обновите URL в `frontend/app.js`:
-```javascript
-function getDefaultBackendUrl() {
-  return "https://your-deployed-backend-url.here";
-}
-```
+### 3. Настройка фронтенда
+После развертывания бэкенда обновите URL в `frontend/app.js` или используйте поле ввода в интерфейсе.
 
 ## 🔧 Локальная разработка
 
@@ -149,8 +152,8 @@ python -m http.server 5173
 
 ## 🎯 Подготовка к демонстрации заказчику
 
-1. **Разверните бэкенд** на Yandex Cloud Functions
-2. **Обновите frontend/app.js** с публичным URL бэкенда
+1. **Разверните бэкенд** на Yandex Cloud Functions или используйте Railway
+2. **Обновите frontend/app.js** с публичным URL бэкенда или используйте поле ввода
 3. **Проверьте здоровье системы**: `GET /health` должен показывать настроенный API-ключ
 4. **Очистите кэш** кнопкой в интерфейсе или запросом `DELETE /cache`
 5. **Протестируйте демо-темы**: `Квантовая механика`, `Фотосинтез`, `Древний Египет`, `Черная дыра`
@@ -175,4 +178,5 @@ MIT License. Сервис использует статьи из Рувики (C
 - Yandex Cloud документация: https://cloud.yandex.ru/docs
 
 ---
-*Проект готов к демонстрации заказчику как полноценный MVP образовательного сервиса.*
+
+*Проект готов к демонстрации заказчику как полноценный MVP образовательного сервиса. Бэкенд работает на Railway, с возможностью переключения на Yandex Cloud Functions после настройки сервисного подключения.*
