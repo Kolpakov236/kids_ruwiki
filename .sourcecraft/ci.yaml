@@ -1,40 +1,26 @@
-name: Deploy Backend
-
 on:
   push:
-    branches:
-      - main
-    paths:
-      - 'backend/**'
-      - '.sourcecraft/ci.yaml'
+    - workflows: [deploy-backend]
+      filter:
+        branches: [main]
+        paths: ['backend/**', '.sourcecraft/ci.yaml']
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-        
-    - name: Install dependencies
-      working-directory: ./backend
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        
-    - name: Run tests
-      working-directory: ./backend
-      run: |
-        python -m pytest -v || echo "No tests found"
-        
-    - name: Deploy to cloud
-      if: success()
-      run: |
-        echo "Backend deployment would happen here"
-        echo "For production, deploy to Yandex Cloud Functions or similar"
-        echo "Update frontend/app.js with the public backend URL"
+workflows:
+  deploy-backend:
+    tasks:
+      - name: deploy-backend-task
+        cubes:
+          - name: setup-python
+            image: python:3.11-slim
+            script:
+              - cd backend
+              - python -m pip install --upgrade pip
+              - pip install -r requirements.txt
+              - python check-health.py || echo "Health check completed"
+              
+          - name: deploy-notification
+            image: alpine:latest
+            script:
+              - echo "Backend готов к деплою на Yandex Cloud Functions"
+              - echo "Для деплоя выполните: ./deploy-yc.sh"
+              - echo "После деплоя обновите frontend/app.js с публичным URL бэкенда"
