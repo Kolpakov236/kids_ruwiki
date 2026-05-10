@@ -6,14 +6,8 @@ const state = {
 };
 
 function getDefaultBackendUrl() {
-  // Если мы на sourcecraft.site, пробуем использовать относительный путь к API
-  // В реальном развертывании backend будет на отдельном сервере
-  // По умолчанию используем localhost для разработки
-  if (window.location.hostname.includes('sourcecraft.site')) {
-    // Для production можно указать публичный URL backend
-    return "https://your-backend-url.here"; // Нужно заменить на реальный URL
-  }
-  return "http://127.0.0.1:8000";
+  // Для production используем Railway
+  return "https://ruwiki-backend-production.up.railway.app";
 }
 
 function initializeBackendUrl() {
@@ -236,7 +230,6 @@ function speak() {
 
 function showNotification(message, type = "info") {
   $("#status").text(message);
-  // Можно добавить более красивые уведомления
 }
 
 $(function () {
@@ -280,7 +273,7 @@ $(function () {
   
   // Показать подсказку при первом посещении
   if (!localStorage.getItem('ruwiki_first_visit')) {
-    $("#status").text("Введите тему или нажмите на пример выше. Для облачного использования укажите публичный URL backend.");
+    $("#status").text("Введите тему или нажмите на пример выше. Backend развернут на Railway.");
     localStorage.setItem('ruwiki_first_visit', 'true');
   }
 });
