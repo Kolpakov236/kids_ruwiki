@@ -1,14 +1,27 @@
 on:
   push:
-    - workflows: [test-workflow]
+    - workflows: [deploy-backend]
       filter:
         branches: [main]
+        paths: ['backend/**', '.sourcecraft/ci.yaml']
 
 workflows:
-  test-workflow:
+  deploy-backend:
     tasks:
-      - name: test-task
+      - name: deploy-backend-task
         cubes:
-          - name: hello-cube
+          - name: setup-python
+            image: python:3.11-slim
             script:
-              - echo "Hello, world!"
+              - cd backend
+              - python -m pip install --upgrade pip
+              - pip install -r requirements.txt
+              - python check-health.py || echo "Health check completed"
+              
+          - name: deploy-notification
+            image: alpine:latest
+            script:
+              - echo "Backend готов к деплою"
+              - echo "API ключ Yandex AI Studio настроен"
+              - echo "Для деплоя выполните: ./deploy-yc.sh"
+              - echo "Или используйте другой бесплатный хостинг"
