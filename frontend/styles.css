@@ -1,0 +1,482 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #fff7ed;
+  color: #182235;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 10% 10%, rgba(255, 197, 87, 0.32), transparent 30%),
+    radial-gradient(circle at 90% 0%, rgba(125, 211, 252, 0.3), transparent 28%),
+    linear-gradient(135deg, #fff7ed 0%, #eef7ff 52%, #f7f2ff 100%);
+}
+
+.page {
+  width: min(1120px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 34px 0 48px;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.brand,
+.healthBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 14px 34px rgba(49, 59, 84, 0.1);
+  font-weight: 900;
+}
+
+.brandMark {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 10px;
+  background: #6d5dfc;
+  color: #fff;
+}
+
+.healthBadge {
+  color: #18764b;
+  font-size: 0.92rem;
+}
+
+.healthBadge.offline {
+  color: #b42318;
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 28px;
+  box-shadow: 0 24px 70px rgba(49, 59, 84, 0.14);
+  padding: 28px;
+  margin-bottom: 20px;
+  backdrop-filter: blur(18px);
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+  gap: 28px;
+  align-items: center;
+  min-height: 330px;
+  margin-bottom: 20px;
+  padding: 34px;
+  border-radius: 34px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(239, 246, 255, 0.78)),
+    linear-gradient(135deg, #ffe4ad, #bae6fd);
+  box-shadow: 0 30px 90px rgba(43, 108, 176, 0.18);
+  overflow: hidden;
+}
+
+.eyebrow {
+  color: #6d5dfc;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 0 0 8px;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0 0 12px;
+}
+
+h1 {
+  max-width: 760px;
+  font-size: clamp(2.25rem, 6vw, 4.8rem);
+  line-height: 0.96;
+  letter-spacing: -0.06em;
+}
+
+h2 {
+  font-size: clamp(1.5rem, 3vw, 2.1rem);
+  letter-spacing: -0.03em;
+}
+
+.muted,
+.status {
+  color: #65748b;
+}
+
+.lead {
+  max-width: 660px;
+  margin: 18px 0 22px;
+  color: #4b5f7a;
+  font-size: 1.14rem;
+  line-height: 1.7;
+}
+
+.badges,
+.actions,
+.examples,
+.resultActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.badges span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(109, 93, 252, 0.1);
+  color: #493bd8;
+  font-weight: 800;
+}
+
+.heroPanel {
+  position: relative;
+  display: grid;
+  gap: 16px;
+  justify-items: end;
+}
+
+.bubble {
+  width: fit-content;
+  max-width: 280px;
+  padding: 18px 20px;
+  border-radius: 24px 24px 8px;
+  background: #ffffff;
+  color: #24344d;
+  box-shadow: 0 18px 42px rgba(49, 59, 84, 0.13);
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.bubble.large {
+  justify-self: start;
+  padding: 28px;
+  border-radius: 32px 32px 10px;
+  font-size: 1.35rem;
+}
+
+.bubble.accent {
+  background: #6d5dfc;
+  color: #fff;
+}
+
+.sectionTitle {
+  margin-bottom: 18px;
+}
+
+.examples {
+  margin: 0 0 18px;
+}
+
+.exampleBtn {
+  min-height: 40px;
+  padding: 10px 14px;
+  border: 1px solid rgba(109, 93, 252, 0.18);
+  background: rgba(109, 93, 252, 0.08);
+  color: #493bd8;
+}
+
+label {
+  display: grid;
+  gap: 8px;
+  font-weight: 700;
+  margin-bottom: 18px;
+}
+
+input,
+textarea,
+select,
+button {
+  border: 1px solid #d9e3f2;
+  border-radius: 16px;
+  font: inherit;
+  padding: 14px 16px;
+}
+
+input,
+textarea,
+select {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.92);
+  color: #182235;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: #7c6cff;
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(124, 108, 255, 0.14);
+}
+
+textarea {
+  resize: vertical;
+  min-height: 112px;
+}
+
+button {
+  min-height: 52px;
+  border: 0;
+  cursor: pointer;
+  font-weight: 800;
+  transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.primaryBtn {
+  background: linear-gradient(135deg, #6d5dfc, #2f80ed);
+  color: #fff;
+  box-shadow: 0 16px 36px rgba(88, 87, 235, 0.3);
+}
+
+.ghostBtn {
+  border: 1px solid #d9e3f2;
+  background: #fff;
+  color: #384760;
+}
+
+button:disabled {
+  background: #aab8cc;
+  color: #fff;
+  cursor: wait;
+  transform: none;
+  box-shadow: none;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.35fr) minmax(240px, 0.65fr);
+  gap: 12px;
+}
+
+.formGrid.three {
+  grid-template-columns: 0.7fr 1fr 1.3fr;
+}
+
+.status {
+  min-height: 24px;
+  margin: 16px 0 0;
+  font-weight: 700;
+}
+
+.progress {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.progress span {
+  position: relative;
+  min-height: 42px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #6b7a90;
+  font-size: 0.9rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.progress span.active {
+  background: #6d5dfc;
+  color: #fff;
+}
+
+.progress span.done {
+  background: rgba(24, 118, 75, 0.1);
+  color: #18764b;
+}
+
+.hidden {
+  display: none;
+}
+
+.resultHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+  margin-bottom: 24px;
+}
+
+.resultLayout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.42fr) minmax(0, 0.58fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.sourceBox,
+.answerBox {
+  display: grid;
+  gap: 14px;
+}
+
+.sourceText {
+  max-height: 360px;
+  overflow: auto;
+  padding: 20px;
+  border-radius: 22px;
+  background: rgba(248, 250, 252, 0.9);
+  border: 1px solid #e4ebf5;
+  color: #59677c;
+  line-height: 1.7;
+}
+
+.mainIdea {
+  padding: 20px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, #6d5dfc, #2f80ed);
+  color: #fff;
+  box-shadow: 0 20px 48px rgba(88, 87, 235, 0.25);
+}
+
+.mainIdea span {
+  display: block;
+  margin-bottom: 8px;
+  opacity: 0.78;
+  font-size: 0.85rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mainIdea p {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 900;
+  line-height: 1.45;
+}
+
+#sourceUrl {
+  color: #3b63d9;
+  word-break: break-all;
+}
+
+.text {
+  white-space: pre-wrap;
+  line-height: 1.8;
+  font-size: 1.13rem;
+  padding: 22px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, #ffffff, #f8fbff);
+  border: 1px solid #e4ebf5;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 18px;
+  margin: 24px 0;
+}
+
+.quiz {
+  display: grid;
+  gap: 10px;
+}
+
+.quizItem {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(109, 93, 252, 0.07);
+}
+
+.quizItem summary {
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.quizItem p,
+.emptyText {
+  margin: 10px 0 0;
+  color: #52627a;
+}
+
+.infoBox {
+  padding: 20px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid #e4ebf5;
+}
+
+ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+li {
+  margin-bottom: 8px;
+  line-height: 1.55;
+}
+
+pre {
+  overflow: auto;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 16px;
+  border-radius: 12px;
+}
+
+details {
+  color: #52627a;
+}
+
+@media (max-width: 760px) {
+  .hero,
+  .formGrid,
+  .formGrid.three,
+  .resultLayout,
+  .progress {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar,
+  .resultHeader {
+    display: grid;
+  }
+
+  .hero {
+    padding: 26px;
+  }
+
+  .heroPanel {
+    justify-items: stretch;
+  }
+
+  .bubble,
+  .bubble.large {
+    justify-self: stretch;
+    max-width: none;
+  }
+
+  .backendField {
+    display: none;
+  }
+}
+

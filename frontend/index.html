@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Рувик для детей</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brandMark">Р</span>
+          <span>Рувик Kids</span>
+        </div>
+        <div id="healthBadge" class="healthBadge">Проверка сервиса...</div>
+      </header>
+
+      <section class="hero">
+        <div class="heroText">
+          <p class="eyebrow">Детская версия сложных статей</p>
+          <h1>Рувики становится понятной с первого чтения</h1>
+          <p class="lead">Сервис находит статью, выделяет главное и превращает сложный текст в ясное объяснение с терминами, примером и мини-викториной.</p>
+          <div class="badges">
+            <span>Для 8-14 лет</span>
+            <span>Проверка качества</span>
+            <span>Озвучка</span>
+          </div>
+        </div>
+        <div class="heroPanel" aria-hidden="true">
+          <div class="bubble large">Главная мысль в одну фразу</div>
+          <div class="bubble">Сложные слова становятся понятными</div>
+          <div class="bubble accent">3 вопроса для закрепления</div>
+        </div>
+      </section>
+
+      <section class="card controls">
+        <div class="sectionTitle">
+          <p class="eyebrow">Демо-запрос</p>
+          <h2>Что объяснить?</h2>
+        </div>
+
+        <div class="examples" aria-label="Примеры тем">
+          <button class="exampleBtn" type="button" data-query="Квантовая механика">Квантовая механика</button>
+          <button class="exampleBtn" type="button" data-query="Фотосинтез">Фотосинтез</button>
+          <button class="exampleBtn" type="button" data-query="Древний Египет">Древний Египет</button>
+          <button class="exampleBtn" type="button" data-query="Черная дыра">Черная дыра</button>
+        </div>
+
+        <label>
+          Тема
+          <textarea id="query" maxlength="100" rows="3" placeholder="Например: квантовая механика, фотосинтез, Древний Египет"></textarea>
+        </label>
+
+        <div class="formGrid three">
+          <label>
+            Возраст
+            <select id="age">
+              <option value="8">8 лет</option>
+              <option value="10" selected>10 лет</option>
+              <option value="12">12 лет</option>
+              <option value="14">14 лет</option>
+            </select>
+          </label>
+          <label>
+            Формат
+            <select id="mode">
+              <option value="simple">Очень просто</option>
+              <option value="balanced" selected>Сбалансированно</option>
+              <option value="detailed">Подробнее</option>
+            </select>
+          </label>
+          <label class="backendField">
+            API
+            <input id="backendUrl" type="url" value="http://127.0.0.1:8000" />
+          </label>
+        </div>
+
+        <div class="actions">
+          <button id="submitBtn" class="primaryBtn" type="button">Упростить текст</button>
+          <button id="micBtn" class="ghostBtn" type="button">Говорить</button>
+          <button id="clearBtn" class="ghostBtn" type="button">Очистить кэш</button>
+        </div>
+
+        <p id="status" class="status"></p>
+        <div id="progress" class="progress hidden">
+          <span>Ищу статью</span>
+          <span>Выделяю главное</span>
+          <span>Пишу понятный текст</span>
+          <span>Проверяю качество</span>
+        </div>
+      </section>
+
+      <section id="result" class="card result hidden">
+        <div class="resultHeader">
+          <div>
+            <p class="eyebrow">Результат</p>
+            <h2 id="sourceTitle"></h2>
+            <a id="sourceUrl" target="_blank" rel="noreferrer"></a>
+          </div>
+          <div class="resultActions">
+            <button id="copyBtn" class="ghostBtn" type="button">Скопировать</button>
+            <button id="speakBtn" class="ghostBtn" type="button">Озвучить</button>
+          </div>
+        </div>
+
+        <div class="resultLayout">
+          <aside class="sourceBox">
+            <h3>Фрагмент оригинала</h3>
+            <div id="originalText" class="sourceText"></div>
+          </aside>
+          <section class="answerBox">
+            <div class="mainIdea">
+              <span>Главная мысль</span>
+              <p id="mainIdea"></p>
+            </div>
+            <h3>Простое объяснение</h3>
+            <div id="simplifiedText" class="text"></div>
+          </section>
+        </div>
+
+        <div class="grid">
+          <div class="infoBox">
+            <h3>Термины</h3>
+            <ul id="glossary"></ul>
+          </div>
+          <div class="infoBox">
+            <h3>Примеры</h3>
+            <ul id="analogies"></ul>
+          </div>
+          <div class="infoBox">
+            <h3>Мини-викторина</h3>
+            <div id="quiz" class="quiz"></div>
+          </div>
+        </div>
+
+        <details>
+          <summary>Технические детали</summary>
+          <pre id="meta"></pre>
+        </details>
+      </section>
+    </main>
+
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
+
