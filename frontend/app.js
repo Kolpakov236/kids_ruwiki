@@ -2,7 +2,33 @@ const state = {
   simplifiedText: "",
   recognition: null,
   progressTimer: null,
+  backendUrl: "",
 };
+
+function getDefaultBackendUrl() {
+  // Если мы на sourcecraft.site, пробуем использовать относительный путь к API
+  // В реальном развертывании backend будет на отдельном сервере
+  // По умолчанию используем localhost для разработки
+  if (window.location.hostname.includes('sourcecraft.site')) {
+    // Для production можно указать публичный URL backend
+    return "https://your-backend-url.here"; // Нужно заменить на реальный URL
+  }
+  return "http://127.0.0.1:8000";
+}
+
+function initializeBackendUrl() {
+  const savedUrl = localStorage.getItem('ruwiki_backend_url');
+  const defaultUrl = getDefaultBackendUrl();
+  const url = savedUrl || defaultUrl;
+  $('#backendUrl').val(url);
+  state.backendUrl = url;
+  return url;
+}
+
+function saveBackendUrl(url) {
+  localStorage.setItem('ruwiki_backend_url', url);
+  state.backendUrl = url;
+}
 
 function setBusy(isBusy, message = "") {
   $("#submitBtn").prop("disabled", isBusy);
@@ -83,6 +109,7 @@ function renderResult(data) {
   $("#meta").text(JSON.stringify({
     cached: data.cached,
     model: data.model,
+    provider: data.provider,
     quality: data.quality,
     verifier: data.verifier,
     timings_ms: data.timings_ms,
@@ -102,7 +129,10 @@ async function simplify() {
     return;
   }
 
-  setBusy(true, "Ищу статью и упрощаю текст через Gemini 2.5 Flash...");
+  // Сохраняем URL backend
+  saveBackendUrl(backendUrl);
+
+  setBusy(true, "Ищу статью в Рувики...");
   try {
     const res = await fetch(`${backendUrl}/simplify`, {
       method: "POST",
@@ -111,12 +141,13 @@ async function simplify() {
     });
     const data = await res.json();
     if (!res.ok) {
-      throw new Error(data.detail || "Ошибка запроса");
+      throw new Error(data.detail || `Ошибка сервера: ${res.status}`);
     }
     renderResult(data);
-    setBusy(false, data.cached ? "Готово: ответ взят из кэша." : "Готово: текст стал проще.");
+    setBusy(false, data.cached ? "Готово: ответ взят из кэша." : "Готово: текст стал проще!");
   } catch (e) {
-    setBusy(false, `Не получилось: ${e.message}`);
+    setBusy(false, `Ошибка: ${e.message}`);
+    console.error("Simplify error:", e);
   }
 }
 
@@ -132,8 +163,9 @@ async function checkHealth() {
       ? `${data.provider}: ${data.model}`
       : "API-ключ не настроен";
     $("#healthBadge").removeClass("offline").text(label);
-  } catch {
+  } catch (e) {
     $("#healthBadge").addClass("offline").text("Backend недоступен");
+    console.error("Health check error:", e);
   }
 }
 
@@ -165,7 +197,7 @@ async function copyResult() {
   ].join("\n");
   try {
     await navigator.clipboard.writeText(text);
-    $("#status").text("Результат скопирован.");
+    $("#status").text("Результат скопирован в буфер обмена.");
   } catch {
     $("#status").text("Браузер не разрешил копирование. Выделите текст вручную.");
   }
@@ -202,22 +234,37 @@ function speak() {
   window.speechSynthesis.speak(utterance);
 }
 
+function showNotification(message, type = "info") {
+  $("#status").text(message);
+  // Можно добавить более красивые уведомления
+}
+
 $(function () {
+  // Инициализация backend URL
+  initializeBackendUrl();
+  
   setupSpeechRecognition();
   checkHealth();
+  
   $("#submitBtn").on("click", simplify);
   $("#copyBtn").on("click", copyResult);
   $("#clearBtn").on("click", clearCache);
-  $("#backendUrl").on("change", checkHealth);
+  $("#backendUrl").on("change", function() {
+    saveBackendUrl($(this).val().replace(/\/$/, ""));
+    checkHealth();
+  });
+  
   $(".exampleBtn").on("click", function () {
     $("#query").val($(this).data("query"));
     simplify();
   });
+  
   $("#query").on("keydown", (e) => {
     if (e.ctrlKey && e.key === "Enter") {
       simplify();
     }
   });
+  
   $("#micBtn").on("click", () => {
     if (!state.recognition) {
       return;
@@ -225,6 +272,15 @@ $(function () {
     $("#micBtn").prop("disabled", true);
     state.recognition.start();
   });
+  
   $("#speakBtn").on("click", speak);
+  
+  // Автофокус на поле ввода
+  $("#query").focus();
+  
+  // Показать подсказку при первом посещении
+  if (!localStorage.getItem('ruwiki_first_visit')) {
+    $("#status").text("Введите тему или нажмите на пример выше. Для облачного использования укажите публичный URL backend.");
+    localStorage.setItem('ruwiki_first_visit', 'true');
+  }
 });
-

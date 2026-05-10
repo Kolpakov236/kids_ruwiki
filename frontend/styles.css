@@ -194,6 +194,16 @@ h2 {
   border: 1px solid rgba(109, 93, 252, 0.18);
   background: rgba(109, 93, 252, 0.08);
   color: #493bd8;
+  border-radius: 12px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.exampleBtn:hover {
+  background: rgba(109, 93, 252, 0.15);
+  transform: translateY(-1px);
 }
 
 label {
@@ -201,6 +211,13 @@ label {
   gap: 8px;
   font-weight: 700;
   margin-bottom: 18px;
+}
+
+.hint {
+  font-size: 0.85rem;
+  color: #65748b;
+  margin-top: 4px;
+  font-weight: normal;
 }
 
 input,
@@ -242,6 +259,7 @@ button {
   cursor: pointer;
   font-weight: 800;
   transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
+  border-radius: 16px;
 }
 
 button:hover:not(:disabled) {
@@ -377,6 +395,11 @@ button:disabled {
 #sourceUrl {
   color: #3b63d9;
   word-break: break-all;
+  text-decoration: none;
+}
+
+#sourceUrl:hover {
+  text-decoration: underline;
 }
 
 .text {
@@ -425,6 +448,21 @@ button:disabled {
   border: 1px solid #e4ebf5;
 }
 
+.infoBox h3 {
+  margin-top: 0;
+}
+
+.steps {
+  padding-left: 20px;
+  margin: 0;
+}
+
+.steps li {
+  margin-bottom: 12px;
+  line-height: 1.6;
+  color: #4b5f7a;
+}
+
 ul {
   margin: 0;
   padding-left: 20px;
@@ -441,10 +479,35 @@ pre {
   color: #e2e8f0;
   padding: 16px;
   border-radius: 12px;
+  font-size: 0.9rem;
 }
 
 details {
   color: #52627a;
+  margin-top: 20px;
+}
+
+details summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.footer {
+  text-align: center;
+  padding: 24px;
+  color: #65748b;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  margin-top: 40px;
+}
+
+.footer a {
+  color: #6d5dfc;
+  text-decoration: none;
+}
+
+.footer a:hover {
+  text-decoration: underline;
 }
 
 @media (max-width: 760px) {
@@ -478,5 +541,8 @@ details {
   .backendField {
     display: none;
   }
+  
+  .footer {
+    padding: 20px 16px;
+  }
 }
-
