@@ -258,10 +258,23 @@ async def _ollama_chat(messages: list[dict[str, str]]) -> dict[str, Any]:
 
 
 async def _openai_compatible_chat(messages: list[dict[str, str]]) -> dict[str, Any]:
-    url = f"{settings.llm_base_url.rstrip('/')}/v1/chat/completions"
+    base = settings.llm_base_url.rstrip("/")
+    # Yandex AI Studio OpenAI-compatible endpoint is under /v1.
+    # Many configs use Foundation Models base (/foundationModels/v1) — normalize it.
+    if ("llm.api.cloud.yandex.net" in base) and ("/foundationModels/v1" in base):
+        base = base.replace("/foundationModels/v1", "/v1")
+
+    # Support both forms: base="https://.../v1" or base="https://..."
+    url = f"{base}/chat/completions" if base.endswith("/v1") else f"{base}/v1/chat/completions"
     headers = {}
     if settings.llm_api_key:
-        headers["Authorization"] = f"Bearer {settings.llm_api_key}"
+        # Yandex API keys use "Api-Key". IAM tokens use "Bearer".
+        if "llm.api.cloud.yandex.net" in base or str(settings.llm_model).startswith("gpt://"):
+            headers["Authorization"] = f"Api-Key {settings.llm_api_key}"
+        else:
+            headers["Authorization"] = f"Bearer {settings.llm_api_key}"
+    if settings.openai_project:
+        headers["OpenAI-Project"] = settings.openai_project
     payload = {
         "model": settings.llm_model,
         "messages": messages,

@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Рувик для детей — Образовательный сервис</title>
-    <meta name="description" content="Превращаем сложные статьи Рувики в понятные объяснения для детей 8-14 лет. Сервис находит статью, выделяет главное и создает простое объяснение с терминами, примерами и викториной.">
+    <title>Ruwiki Explain</title>
+    <meta name="description" content="Понятные объяснения для детей 8–14 лет: главная мысль, простой текст, термины, примеры и мини‑викторина.">
     <link rel="stylesheet" href="./styles.css" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📚</text></svg>">
   </head>
@@ -13,21 +13,21 @@
       <header class="topbar">
         <div class="brand">
           <span class="brandMark">Р</span>
-          <span>Рувик Kids</span>
+          <span>Ruwiki Explain</span>
         </div>
         <div id="healthBadge" class="healthBadge">Проверка сервиса...</div>
       </header>
 
       <section class="hero">
         <div class="heroText">
-          <p class="eyebrow">Детская версия сложных статей</p>
-          <h1>Рувики становится понятной с первого чтения</h1>
-          <p class="lead">Сервис находит статью, выделяет главное и превращает сложный текст в ясное объяснение с терминами, примером и мини-викториной.</p>
+          <p class="eyebrow">Понятно и коротко</p>
+          <h1>Объяснение сложных тем простыми словами</h1>
+          <p class="lead">Введите тему — получите главную мысль, простое объяснение, термины, пример и 3 вопроса.</p>
           <div class="badges">
             <span>Для 8-14 лет</span>
             <span>Проверка качества</span>
             <span>Озвучка</span>
-            <span>Бесплатно</span>
+            <span>Кэш</span>
           </div>
         </div>
         <div class="heroPanel" aria-hidden="true">
@@ -39,7 +39,7 @@
 
       <section class="card controls">
         <div class="sectionTitle">
-          <p class="eyebrow">Демо-запрос</p>
+          <p class="eyebrow">Пример</p>
           <h2>Что объяснить?</h2>
         </div>
 
@@ -53,7 +53,7 @@
         <label>
           Тема
           <textarea id="query" maxlength="100" rows="3" placeholder="Например: квантовая механика, фотосинтез, Древний Египет, электричество, иммунитет"></textarea>
-          <div class="hint">Введите тему или название статьи из Рувики</div>
+          <div class="hint">Введите тему или название статьи</div>
         </label>
 
         <div class="formGrid three">
@@ -74,28 +74,17 @@
               <option value="detailed">Подробнее</option>
             </select>
           </label>
-          <label class="backendField">
-            Тип бэкенда
-            <select id="backendType">
-              <option value="railway" selected>Railway (работает)</option>
-              <option value="yandex">Yandex Cloud Functions</option>
-            </select>
-            <div class="hint">Выберите платформу для бэкенда</div>
-          </label>
+          <div></div>
         </div>
         
         <div class="formGrid">
           <label class="backendField full">
             API сервера
             <input id="backendUrl" type="url" value="http://127.0.0.1:8000" />
-            <div class="hint">URL вашего бэкенда. Изменится автоматически при смене типа</div>
+            <div class="hint">URL вашего backend API</div>
           </label>
         </div>
         
-        <div id="backendInfo" class="infoBox">
-          <!-- Динамически заполняется app.js -->
-        </div>
-
         <div class="actions">
           <button id="submitBtn" class="primaryBtn" type="button">Упростить текст</button>
           <button id="micBtn" class="ghostBtn" type="button">Говорить</button>
@@ -113,11 +102,10 @@
         <div class="infoBox">
           <h3>Как это работает?</h3>
           <ol class="steps">
-            <li>Находит статью в Рувики по вашей теме</li>
-            <li>Выбирает самый важный фрагмент текста</li>
-            <li>Использует Yandex AI Studio для перефразирования под выбранный возраст</li>
-            <li>Проверяет качество ответа и сохраняет в кэш</li>
-            <li>Показывает результат с терминами, примерами и викториной</li>
+            <li>Находит статью по теме</li>
+            <li>Берёт ключевой фрагмент текста</li>
+            <li>Генерирует объяснение под выбранный возраст</li>
+            <li>Проверяет качество и кэширует успешные ответы</li>
           </ol>
         </div>
       </section>
@@ -172,9 +160,8 @@
       </section>
       
       <footer class="footer">
-        <p>© 2024 Рувик Kids. Образовательный сервис для детей.</p>
-        <p>Использует Yandex AI Studio для генерации объяснений. Статьи предоставлены Рувики.</p>
-        <p>Для работы сервиса требуется API ключ Yandex AI Studio. <a href="https://yandex.cloud/ru/services/foundation-models" target="_blank">Получить грант</a>.</p>
+        <p>© 2024 Ruwiki Explain.</p>
+        <p>Источник статей: Рувики (CC BY-SA 3.0).</p>
       </footer>
     </main>
 

@@ -25,7 +25,7 @@ async def check_ruwiki_api():
         async with httpx.AsyncClient(timeout=10.0) as client:
             # Простой запрос к API Рувики
             response = await client.get(
-                f"{settings.ruwiki_api_base}/page/html/Фотосинтез",
+                f"{settings.ruwiki_rest_api_base}/page/html/Фотосинтез",
                 follow_redirects=True
             )
             if response.status_code == 200:
@@ -34,6 +34,30 @@ async def check_ruwiki_api():
                 return False, f"❌ API Рувики недоступен (статус: {response.status_code})"
     except Exception as e:
         return False, f"❌ Ошибка подключения к API Рувики: {str(e)}"
+
+
+async def check_wikipedia_api():
+    """Проверяет доступность ru.wikipedia.org (fallback-источник)."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                "https://ru.wikipedia.org/w/api.php",
+                params={
+                    "action": "query",
+                    "format": "json",
+                    "prop": "extracts",
+                    "explaintext": "1",
+                    "redirects": "1",
+                    "titles": "Фотосинтез",
+                },
+                headers={"User-Agent": "ruwiki-explain/healthcheck"},
+                follow_redirects=True,
+            )
+            if response.status_code == 200:
+                return True, "✅ Wikipedia API доступен (fallback)"
+            return False, f"❌ Wikipedia API недоступен (статус: {response.status_code})"
+    except Exception as e:
+        return False, f"❌ Ошибка подключения к Wikipedia API: {str(e)}"
 
 
 async def check_llm_config():
@@ -104,6 +128,9 @@ async def main():
     print("\n1. Проверка API Рувики...")
     ruwiki_ok, ruwiki_msg = await check_ruwiki_api()
     print(f"   {ruwiki_msg}")
+
+    wiki_ok, wiki_msg = await check_wikipedia_api()
+    print(f"   {wiki_msg}")
     
     # 2. Проверка конфигурации LLM
     print("\n2. Проверка конфигурации LLM...")
@@ -119,7 +146,10 @@ async def main():
     print("\n" + "=" * 60)
     print("ИТОГ:")
     
-    all_ok = ruwiki_ok and llm_config_ok and llm_api_ok
+    # Ruwiki может быть временно недоступен (5xx/anti-bot). Если доступна Википедия,
+    # сервис всё равно способен работать (fallback в fetch_article()).
+    source_ok = ruwiki_ok or wiki_ok
+    all_ok = source_ok and llm_config_ok and llm_api_ok
     
     if all_ok:
         print("✅ Все системы работают нормально!")
@@ -129,8 +159,8 @@ async def main():
         print("3. Протестируйте с демо-темами")
     else:
         print("⚠️  Есть проблемы с настройкой:")
-        if not ruwiki_ok:
-            print("   • API Рувики недоступен")
+        if not source_ok:
+            print("   • Источник статей недоступен (Ruwiki и Wikipedia)")
         if not llm_config_ok:
             print("   • Конфигурация LLM неполная")
         if not llm_api_ok:

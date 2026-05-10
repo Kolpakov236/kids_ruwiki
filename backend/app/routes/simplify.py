@@ -11,6 +11,17 @@ from app.services.pipeline import simplify_pipeline
 
 router = APIRouter()
 
+def _is_llm_request(e: Exception) -> bool:
+    req = getattr(e, "request", None)
+    if req is None:
+        return False
+    try:
+        url = str(req.url)
+    except Exception:
+        return False
+    base = str(settings.llm_base_url or "").rstrip("/")
+    return (base and base in url) or ("llm.api.cloud.yandex.net" in url) or ("/chat/completions" in url)
+
 
 @router.post("/simplify", response_model=SimplifyResponse)
 async def simplify(req: SimplifyRequest) -> SimplifyResponse:
@@ -21,13 +32,19 @@ async def simplify(req: SimplifyRequest) -> SimplifyResponse:
     except LLMError as e:
         raise HTTPException(status_code=502, detail=_public_llm_error(str(e))) from e
     except httpx.ConnectError as e:
-        raise HTTPException(status_code=502, detail="llm_provider_unavailable") from e
+        if _is_llm_request(e):
+            raise HTTPException(status_code=502, detail="llm_provider_unavailable") from e
+        url = str(getattr(getattr(e, "request", None), "url", "unknown_url"))
+        raise HTTPException(status_code=502, detail=f"upstream_connect_error:{url}") from e
     except httpx.HTTPStatusError as e:
         body = e.response.text[:500] if e.response is not None else ""
         url = str(e.request.url) if e.request is not None else "unknown_url"
         raise HTTPException(status_code=502, detail=f"upstream_http_{e.response.status_code}:{url}:{body}") from e
     except httpx.TimeoutException as e:
-        raise HTTPException(status_code=504, detail="llm_provider_timeout") from e
+        if _is_llm_request(e):
+            raise HTTPException(status_code=504, detail="llm_provider_timeout") from e
+        url = str(getattr(getattr(e, "request", None), "url", "unknown_url"))
+        raise HTTPException(status_code=504, detail=f"upstream_timeout:{url}") from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
 
