@@ -92,6 +92,8 @@ def init_db() -> None:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN model_json TEXT NOT NULL DEFAULT '{{}}'")
             if "verifier_json" not in cols:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN verifier_json TEXT NOT NULL DEFAULT '{{}}'")
+            if "extras_json" not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN extras_json TEXT NOT NULL DEFAULT '{{}}'")
 
 
 def now_ms() -> int:

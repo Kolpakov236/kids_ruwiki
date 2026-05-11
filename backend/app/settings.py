@@ -39,7 +39,7 @@ class Settings(BaseSettings):
 
     sqlite_path: str = "./data/app.db"
     chroma_path: str = "./data/chroma"
-    enable_vector_cache: bool = False
+    enable_vector_cache: bool = True
 
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 

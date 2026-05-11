@@ -14,6 +14,8 @@ from app.settings import settings
 class LLMResult:
     main_idea: str
     simplified_text: str
+    reasoning_steps: list[str]
+    learning_steps: list[str]
     glossary: list[dict[str, str]]
     analogies: list[str]
     quiz: list[dict[str, str]]
@@ -25,26 +27,30 @@ class LLMError(RuntimeError):
 
 
 def model_variant() -> str:
-    return f"{settings.llm_provider}:{settings.llm_model}:child-v5"
+    return f"{settings.llm_provider}:{settings.llm_model}:fact-anchored-v1"
 
 
 def _system_prompt() -> str:
     return (
         "Ты редактор детской энциклопедии и опытный учитель. "
-        "Твоя задача — превращать сложный энциклопедический текст в ясное объяснение для детей 8-14 лет. "
-        "Сохраняй только факты из исходного текста, не добавляй неподтвержденные сведения и не копируй тяжелые фразы. "
-        "Пиши живо, спокойно и понятно. Не используй Markdown-разметку. Ответь только валидным JSON."
+        "Твоя задача — превращать сложный энциклопедический текст в ясное объяснение для детей 6-14 лет. "
+        "Сохраняй только факты из исходного текста. Главный приоритет — не потерять ключевые термины, формулы, единицы измерения, даты, имена и причинно-следственные связи. "
+        "Упрощай синтаксис, но не выкидывай научные понятия. "
+        "Имена людей, названия стран и организаций, важные даты и годы должны попасть в упрощённый текст так же, как в источнике "
+        "(им можно слегка сопроводить простым пояснением, но не заменять выдуманными названиями). "
+        "Если указаны интересы ребёнка — используй их только для понятных аналогий и примеров; новые факты из головы не придумывай. "
+        "Перед финальным текстом последовательно разберись: что главное, какие якорные факты нельзя потерять, "
+        "как объяснить простыми словами и как связать один пример с интересами без искажения смысла. "
+        "Пиши живо и спокойно. Без Markdown. Ответь только валидным JSON."
     )
 
 
 def _age_style(age: int) -> str:
-    if age <= 9:
-        return "очень короткие предложения, бытовые слова, без сложных оборотов"
+    if age <= 8:
+        return "очень короткие предложения до 8 слов, самые простые слова, примеры из игр, сказок и дома"
     if age <= 11:
-        return "короткие предложения, простые объяснения терминов, один понятный пример"
-    if age <= 13:
-        return "простая школьная речь, чуть больше деталей, но без канцелярита"
-    return "ясный подростковый стиль, точность без перегруза терминами"
+        return "короткие предложения до 10-12 слов, простые термины с пояснениями, один яркий пример"
+    return "ясный подростковый стиль 12-14 лет, базовые научные понятия с живыми аналогиями, без канцелярита"
 
 
 def _mode_style(mode: str) -> str:
@@ -55,34 +61,107 @@ def _mode_style(mode: str) -> str:
     return "сбалансированное объяснение: понятно, коротко и достаточно информативно"
 
 
+def _mode_lengths(mode: str) -> tuple[str, str, str]:
+    if mode == "simple":
+        return (
+            "5-8 коротких предложений",
+            "4-5 шагов",
+            "3-4 пункта",
+        )
+    if mode == "detailed":
+        return (
+            "10-14 предложений",
+            "7-9 шагов",
+            "6-8 пунктов",
+        )
+    return (
+        "8-12 предложений",
+        "6-8 шагов",
+        "5-7 пунктов",
+    )
+
+
 def _output_schema_text() -> str:
     return (
         '{"main_idea":"...",'
         '"simplified_text":"...",'
+        '"reasoning_steps":["шаг размышления 1","..."],'
+        '"learning_steps":["что узнаём шаг 1","..."],'
         '"glossary":[{"term":"...","definition":"..."}],'
         '"analogies":["..."],'
         '"quiz":[{"question":"...","answer":"..."}]}'
     )
 
 
-def _simplify_user_prompt(text: str, age: int, mode: str) -> str:
+def _personalization_block(interest_topics: list[str], child_notes: str) -> str:
+    topics = [t.strip() for t in interest_topics if t and str(t).strip()][:10]
+    notes = (child_notes or "").strip()
+    lines: list[str] = []
+    if topics:
+        lines.append(
+            "Интересы ребёнка (обязательно используй минимум одну бытовую аналогию или пример из этой области; "
+            "факты про тему статьи только из текста ниже): "
+            + ", ".join(topics)
+            + "."
+        )
+    if notes:
+        lines.append("Коротко о ребёнке (тон и примеры, без диагнозов и ярлыков): " + notes + ".")
+    if not lines:
+        return ""
+    return "\n".join(lines) + "\n"
+
+
+def _simplify_user_prompt(
+    text: str,
+    age: int,
+    mode: str,
+    interest_topics: list[str],
+    child_notes: str,
+    key_facts: dict | None = None,
+) -> str:
+    extra = _personalization_block(interest_topics, child_notes)
+    slen, rlen, llen = _mode_lengths(mode)
+    facts = key_facts or {}
+    required_terms = [str(x) for x in facts.get("required_terms") or []][:48]
+    formulas = [str(x) for x in facts.get("formulas") or []][:16]
+    fact_block = ""
+    if required_terms:
+        fact_block += "ОБЯЗАТЕЛЬНЫЕ ТЕРМИНЫ И ФАКТЫ: " + "; ".join(required_terms) + ".\n"
+    if formulas:
+        fact_block += "ОБЯЗАТЕЛЬНЫЕ ФОРМУЛЫ / ОБОЗНАЧЕНИЯ / ЕДИНИЦЫ: " + "; ".join(formulas) + ".\n"
     return (
         f"Возраст: {age} лет.\n"
         f"Стиль: {_age_style(age)}.\n"
         f"Режим: {_mode_style(mode)}.\n"
-        "Перефразируй текст так, будто объясняешь тему ребенку после школы.\n"
+        + (extra if extra else "")
+        + fact_block
+        + "Сначала последовательно размышляй (поле reasoning_steps). Структура рассуждения:\n"
+        "1) Перечисли обязательные термины, формулы, обозначения, единицы, имена и числа, которые нельзя потерять.\n"
+        "2) Составь план так, чтобы каждый обязательный термин появился в simplified_text дословно или почти дословно.\n"
+        "3) Сохрани определения из оригинала: можно укоротить фразу, но нельзя менять смысл.\n"
+        "4) Только после фактов добавь одну короткую аналогию; аналогия не заменяет термины и формулы.\n"
+        f"Поле learning_steps: {llen} коротких шагов «что узнаём по порядку» для ребёнка.\n"
+        "Перефразируй текст так, будто объясняешь тему после школы.\n"
         "Требования к качеству:\n"
-        "- 6-9 коротких предложений, одна мысль в одном предложении.\n"
-        "- Сначала дай главную идею темы, потом 2-4 важные детали.\n"
-        "- Каждый сложный термин объясни сразу простыми словами.\n"
-        "- Замени канцелярит и научные обороты обычной речью.\n"
-        "- Сохрани имена, даты, места и важные факты из исходного текста.\n"
-        "- Не добавляй фактов, которых нет в исходном тексте.\n"
-        "- Добавь одну добрую аналогию или пример из жизни.\n"
-        "- Добавь 3 вопроса мини-викторины с короткими ответами.\n"
-        "- Глоссарий: 2-4 самых нужных термина.\n"
-        "- Не используй Markdown нигде: без **жирного**, # заголовков, списков, ссылок и HTML.\n"
-        "- Не используй списки внутри simplified_text и кавычки-елочки.\n"
+        f"- В simplified_text: {slen}, но если обязательных терминов много, лучше 12-16 предложений, чем потеря фактов.\n"
+        "- Сначала главная идея, затем важные детали и связь между ними.\n"
+        "- Каждый сложный термин сразу объясни простыми словами рядом.\n"
+        "- Замени канцелярит обычной речью, но сами научные термины сохраняй.\n"
+        "- Имена, даты, места и числа из статьи сохраняй; не подменяй вымышленными названиями.\n"
+        "- Формулы, обозначения и единицы измерения перепиши дословно, если они есть в обязательном списке.\n"
+        "- Ожидаемый ROUGE-1 по обязательным терминам должен быть не ниже 0.60: проверь себя перед ответом.\n"
+        "- Не добавляй фактов вне исходного текста.\n"
+        "- Если интересы указаны: минимум одна ясная аналогия из этой области (без новых фактов про тему).\n"
+        "- Если интересов нет: одна жизненная аналогия из школьного или домашнего опыта.\n"
+        "- 3 вопроса мини-викторины с короткими ответами.\n"
+        "- Глоссарий: 3-5 самых нужных терминов.\n"
+        f"- reasoning_steps: {rlen}, каждый пункт — одно законченное наблюдение на русском.\n"
+        "- analogies: 2-3 короткие строки (разные углы), хотя бы одна про интересы, если они есть.\n"
+        "- В simplified_text используй 2-3 уместных эмодзи для визуальных акцентов (например 🔍, 💡, 🚀), но не перегружай.\n"
+        "- В конце simplified_text добавь один вопрос-вовлечение: «Хочешь узнать...» или «А знаешь ли ты...?».\n"
+        "- Персонализация: не больше одной метафоры из интересов ребёнка, чтобы украшение не вытеснило факты.\n"
+        "- Без Markdown, без **жирного**, без #, без HTML.\n"
+        "- В simplified_text не используй маркированные списки и кавычки-ёлочки.\n"
         f"Верни строго JSON: {_output_schema_text()}\n"
         "Текст:\n"
         f"{text}"
@@ -96,13 +175,18 @@ def _repair_user_prompt(original: str, simplified: str, age: int, missing: list[
             "age": age,
             "missing_entities_or_facts": missing,
             "rules": [
-                "Верни потерянные факты и сущности, но сохрани детский стиль.",
-                "Не добавляй новых фактов.",
+                "Вставь в simplified_text каждый missing item — дословно или почти дословно из original_text.",
+                "Если missing item — формула, обозначение или единица измерения, перепиши его дословно.",
+                "Если не помещается в одно предложение, добавь отдельное короткое предложение.",
+                "Сохрани детский стиль и простые слова; не добавляй новых фактов кроме возвращённых элементов.",
+                "Не удаляй уже удачные части ответа.",
                 "Отвечай тем же JSON schema.",
             ],
             "output_schema": {
                 "main_idea": "string",
                 "simplified_text": "string",
+                "reasoning_steps": ["string"],
+                "learning_steps": ["string"],
                 "glossary": [{"term": "string", "definition": "string"}],
                 "analogies": ["string"],
                 "quiz": [{"question": "string", "answer": "string"}],
@@ -156,6 +240,22 @@ def _clean_text(value: Any) -> str:
     text = re.sub(r"\s+([,.!?;:])", r"\1", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def _normalize_str_list(value: Any, max_items: int = 10, max_len: int = 280) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for x in value:
+        s = _clean_text(x)
+        if not s:
+            continue
+        if len(s) > max_len:
+            s = s[: max_len - 1].rstrip() + "…"
+        out.append(s)
+        if len(out) >= max_items:
+            break
+    return out
 
 
 def _normalize_result(data: dict[str, Any], raw: dict[str, Any]) -> LLMResult:
@@ -214,7 +314,7 @@ def _normalize_result(data: dict[str, Any], raw: dict[str, Any]) -> LLMResult:
     analogies = data.get("analogies") or []
     if not isinstance(analogies, list):
         analogies = []
-    analogies = [_clean_text(x) for x in analogies if _clean_text(x)]
+    analogies = [_clean_text(x) for x in analogies if _clean_text(x)][:5]
 
     quiz = data.get("quiz") or data.get("questions") or []
     if not isinstance(quiz, list):
@@ -228,9 +328,24 @@ def _normalize_result(data: dict[str, Any], raw: dict[str, Any]) -> LLMResult:
         if isinstance(x, dict) and (x.get("question") or x.get("answer"))
     ][:3]
 
+    reasoning_steps = _normalize_str_list(
+        data.get("reasoning_steps")
+        or data.get("reasoning")
+        or data.get("thought_steps"),
+        max_items=8,
+    )
+    learning_steps = _normalize_str_list(
+        data.get("learning_steps")
+        or data.get("steps")
+        or data.get("lesson_steps"),
+        max_items=10,
+    )
+
     return LLMResult(
         main_idea=main_idea,
         simplified_text=text,
+        reasoning_steps=reasoning_steps,
+        learning_steps=learning_steps,
         glossary=glossary,
         analogies=analogies,
         quiz=quiz,
@@ -298,6 +413,8 @@ def _gemini_schema() -> dict[str, Any]:
         "properties": {
             "main_idea": {"type": "STRING"},
             "simplified_text": {"type": "STRING"},
+            "reasoning_steps": {"type": "ARRAY", "items": {"type": "STRING"}},
+            "learning_steps": {"type": "ARRAY", "items": {"type": "STRING"}},
             "glossary": {
                 "type": "ARRAY",
                 "items": {
@@ -325,7 +442,15 @@ def _gemini_schema() -> dict[str, Any]:
                 },
             },
         },
-        "required": ["main_idea", "simplified_text", "glossary", "analogies", "quiz"],
+        "required": [
+            "main_idea",
+            "simplified_text",
+            "reasoning_steps",
+            "learning_steps",
+            "glossary",
+            "analogies",
+            "quiz",
+        ],
     }
 
 
@@ -403,7 +528,10 @@ async def _chat(messages: list[dict[str, str]]) -> LLMResult:
     elif settings.llm_provider == "openai_compatible":
         raw = await _openai_compatible_chat(messages)
     elif settings.llm_provider == "gemini":
-        raw = await _gemini_chat(messages)
+        try:
+            raw = await _gemini_chat(messages)
+        except httpx.TimeoutException as e:
+            raise LLMError("llm_provider_timeout") from e
     else:
         raise LLMError(f"unsupported_llm_provider:{settings.llm_provider}")
 
@@ -418,22 +546,66 @@ async def _chat(messages: list[dict[str, str]]) -> LLMResult:
             raise
         partial_text = _extract_partial_simplified_text(content)
         if partial_text:
-            return LLMResult(main_idea="", simplified_text=partial_text, glossary=[], analogies=[], quiz=[], raw=raw)
+            return LLMResult(
+                main_idea="",
+                simplified_text=partial_text,
+                reasoning_steps=[],
+                learning_steps=[],
+                glossary=[],
+                analogies=[],
+                quiz=[],
+                raw=raw,
+            )
         if str(e).startswith("llm_returned_malformed_json"):
             cleaned = re.sub(r"^\s*\{?\s*\"?simplified_text\"?\s*:\s*\"?", "", content, flags=re.DOTALL)
             cleaned = re.sub(r"\"?\s*,?\s*\"?glossary\"?.*$", "", cleaned, flags=re.DOTALL).strip()
             if cleaned:
-                return LLMResult(main_idea="", simplified_text=cleaned, glossary=[], analogies=[], quiz=[], raw=raw)
-        return LLMResult(main_idea="", simplified_text=content, glossary=[], analogies=[], quiz=[], raw=raw)
+                return LLMResult(
+                    main_idea="",
+                    simplified_text=cleaned,
+                    reasoning_steps=[],
+                    learning_steps=[],
+                    glossary=[],
+                    analogies=[],
+                    quiz=[],
+                    raw=raw,
+                )
+        return LLMResult(
+            main_idea="",
+            simplified_text=content,
+            reasoning_steps=[],
+            learning_steps=[],
+            glossary=[],
+            analogies=[],
+            quiz=[],
+            raw=raw,
+        )
     return _normalize_result(data, raw)
 
 
-async def simplify_with_llm(original_text: str, age: int, mode: str) -> LLMResult:
+async def simplify_with_llm(
+    original_text: str,
+    age: int,
+    mode: str,
+    interest_topics: list[str] | None = None,
+    child_notes: str = "",
+    key_facts: dict | None = None,
+) -> LLMResult:
     text = original_text[: settings.llm_max_input_chars].strip()
     return await _chat(
         [
             {"role": "system", "content": _system_prompt()},
-            {"role": "user", "content": _simplify_user_prompt(text, age, mode)},
+            {
+                "role": "user",
+                "content": _simplify_user_prompt(
+                    text,
+                    age,
+                    mode,
+                    interest_topics or [],
+                    child_notes,
+                    key_facts,
+                ),
+            },
         ]
     )
 

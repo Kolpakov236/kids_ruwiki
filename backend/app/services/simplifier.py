@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 
 def _split_long_sentences(text: str, max_words: int) -> str:
@@ -88,4 +89,76 @@ def improve_child_readability(text: str, age: int) -> dict:
     out = re.sub(r"\s+([,.!?;:])", r"\1", out)
     out = re.sub(r"\s+", " ", out).strip()
     return {"text": out, "glossary": glossary, "analogies": analogies}
+
+
+def build_extractive_fallback(original_text: str, age: int, key_facts: dict[str, Any] | None = None) -> dict:
+    """Fast fallback when LLM is unavailable.
+
+    It is intentionally extractive: keep factual anchors and simplify sentence boundaries
+    instead of inventing a free paraphrase. This guarantees a usable response on timeouts.
+    """
+    facts = key_facts or {}
+    required = [str(x).strip() for x in (facts.get("required_terms") or []) if str(x).strip()]
+    formulas = [str(x).strip() for x in (facts.get("formulas") or []) if str(x).strip()]
+    anchors = [*formulas[:8], *required[:18]]
+
+    normalized = re.sub(r"\s+", " ", original_text).strip()
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?…])\s+", normalized) if s.strip()]
+
+    selected: list[str] = []
+    selected_keys: set[str] = set()
+    for anchor in anchors:
+        key = anchor.lower().replace("ё", "е")
+        for sentence in sentences:
+            s_key = sentence.lower().replace("ё", "е")
+            parts = [p for p in key.split() if len(p) >= 3]
+            if key in s_key or (len(parts) >= 2 and all(p in s_key for p in parts)):
+                clean = sentence[:320].strip()
+                if clean and clean.lower() not in selected_keys:
+                    selected.append(clean)
+                    selected_keys.add(clean.lower())
+                break
+        if len(selected) >= 8:
+            break
+
+    if not selected:
+        selected = sentences[:6]
+
+    max_words = 9 if age <= 8 else 13 if age <= 11 else 18
+    simple = _split_long_sentences(" ".join(selected), max_words=max_words)
+    simple = re.sub(r"\s+", " ", simple).strip()
+    if simple and not re.search(r"[.!?…]$", simple):
+        simple += "."
+
+    intro = "Главная мысль: это тема, где важно сохранить точные слова и обозначения из статьи."
+    text = f"{intro} {simple}"
+    if formulas:
+        text += " Важно запомнить формулу или обозначение: " + ", ".join(formulas[:4]) + "."
+    text += " Хочешь узнать это на простом примере из жизни?"
+
+    glossary = [{"term": t, "definition": "важный термин из статьи"} for t in required[:5]]
+    analogies = ["Это похоже на карту: сначала держим главные обозначения, а потом объясняем дорогу простыми словами."]
+    quiz = [
+        {"question": "Какой главный термин встретился в статье?", "answer": required[0] if required else "Посмотри на главную мысль."},
+        {"question": "Какая формула или единица была важной?", "answer": formulas[0] if formulas else "В этой теме важнее термины, чем формулы."},
+        {"question": "Почему нельзя выкидывать точные слова?", "answer": "Потому что они держат смысл статьи."},
+    ]
+    return {
+        "main_idea": intro,
+        "simplified_text": text,
+        "reasoning_steps": [
+            "LLM не успела ответить, поэтому включён быстрый локальный режим.",
+            "Ответ собран из предложений статьи, где есть обязательные термины и формулы.",
+            "Синтаксис упрощён, но факты и обозначения сохранены.",
+        ],
+        "learning_steps": [
+            "Сначала находим главный термин.",
+            "Затем смотрим важные обозначения и формулы.",
+            "Потом читаем короткое объяснение.",
+            "В конце проверяем себя вопросами.",
+        ],
+        "glossary": glossary,
+        "analogies": analogies,
+        "quiz": quiz,
+    }
 

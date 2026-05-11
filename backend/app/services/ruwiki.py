@@ -88,8 +88,8 @@ async def fetch_article(query: str) -> RuwikiArticle:
     title = q.replace("_", " ")
     encoded = quote(title)
     async with httpx.AsyncClient(
-        # Ruwiki can be slow / rate-limited; prefer fewer attempts with a longer read timeout.
-        timeout=httpx.Timeout(25.0, connect=5.0, read=20.0),
+        # Keep article fetch fast; LLM has its own timeout later in the pipeline.
+        timeout=httpx.Timeout(8.0, connect=3.0, read=6.0),
         follow_redirects=True,
         headers={
             # Some hosts return an HTML anti-bot page unless the request looks like a browser.
@@ -109,54 +109,97 @@ async def fetch_article(query: str) -> RuwikiArticle:
 
         last_err: Exception | None = None
         attempts = 0
-        max_attempts = 3
+        # A guard against accidental infinite loops, not a user-facing failure mode.
+        max_attempts = 24
+
+        async def try_mw_extract(api_url: str, requested_title: str) -> RuwikiArticle | None:
+            nonlocal last_err, attempts
+            if attempts >= max_attempts:
+                return None
+            attempts += 1
+            api = await client.get(api_url, params={**params, "titles": requested_title})
+            if api.status_code == 404:
+                last_err = httpx.HTTPStatusError("mw_api_404", request=api.request, response=api)
+                return None
+            if api.status_code == 403:
+                last_err = httpx.HTTPStatusError("mw_api_403", request=api.request, response=api)
+                return None
+            if 500 <= api.status_code <= 599:
+                last_err = httpx.HTTPStatusError("mw_api_5xx", request=api.request, response=api)
+                return None
+            api.raise_for_status()
+            ct = (api.headers.get("content-type") or "").lower()
+            body_text = api.text or ""
+            if "application/json" not in ct or _looks_like_html(body_text):
+                last_err = ValueError("mw_api_non_json_response")
+                return None
+
+            data = api.json()
+            pages = data.get("query", {}).get("pages", {})
+            for page in pages.values():
+                if "missing" in page:
+                    continue
+                extract = str(page.get("extract", "")).strip()
+                if len(extract) >= 50:
+                    resolved_title = str(page.get("title") or requested_title)
+                    text = re.sub(r"\n{3,}", "\n\n", extract).strip()
+                    site = api_url.split("/w/")[0].split("/api.php")[0].split("/w/api.php")[0].rstrip("/")
+                    return RuwikiArticle(
+                        title=resolved_title,
+                        url=f"{site}/wiki/{quote(resolved_title)}",
+                        text=text,
+                    )
+            last_err = ValueError("mw_api_empty_or_missing_extract")
+            return None
+
+        async def mw_search_title(api_url: str) -> str | None:
+            nonlocal last_err, attempts
+            if attempts >= max_attempts:
+                return None
+            attempts += 1
+            search = await client.get(
+                api_url,
+                params={
+                    "action": "query",
+                    "format": "json",
+                    "list": "search",
+                    "srsearch": title,
+                    "srlimit": "1",
+                },
+            )
+            if search.status_code in {403, 404} or 500 <= search.status_code <= 599:
+                last_err = httpx.HTTPStatusError("mw_search_failed", request=search.request, response=search)
+                return None
+            search.raise_for_status()
+            ct = (search.headers.get("content-type") or "").lower()
+            if "application/json" not in ct or _looks_like_html(search.text or ""):
+                last_err = ValueError("mw_search_non_json_response")
+                return None
+            rows = search.json().get("query", {}).get("search", [])
+            if not rows:
+                last_err = ValueError("mw_search_no_results")
+                return None
+            return str(rows[0].get("title") or "").strip() or None
+
         for api_url in _mw_api_candidates() + _wikipedia_api_candidates():
             try:
-                if attempts >= max_attempts:
-                    break
-                attempts += 1
-                api = await client.get(api_url, params=params)
-                if api.status_code == 404:
-                    continue
-                if api.status_code == 403:
-                    # blocked on this host; try next
-                    last_err = httpx.HTTPStatusError("mw_api_403", request=api.request, response=api)
-                    continue
-                if 500 <= api.status_code <= 599:
-                    last_err = httpx.HTTPStatusError("mw_api_5xx", request=api.request, response=api)
-                    continue
-                api.raise_for_status()
-                ct = (api.headers.get("content-type") or "").lower()
-                body_text = api.text or ""
-                if "application/json" not in ct or _looks_like_html(body_text):
-                    last_err = ValueError("mw_api_non_json_response")
-                    continue
-
-                data = api.json()
-                pages = data.get("query", {}).get("pages", {})
-                for page in pages.values():
-                    if "missing" in page:
-                        continue
-                    extract = str(page.get("extract", "")).strip()
-                    if len(extract) >= 50:
-                        resolved_title = str(page.get("title") or title)
-                        text = re.sub(r"\n{3,}", "\n\n", extract).strip()
-                        site = api_url.split("/w/")[0].split("/api.php")[0].split("/w/api.php")[0].rstrip("/")
-                        return RuwikiArticle(
-                            title=resolved_title,
-                            url=f"{site}/wiki/{quote(resolved_title)}",
-                            text=text,
-                        )
+                article = await try_mw_extract(api_url, title)
+                if article:
+                    return article
+                resolved = await mw_search_title(api_url)
+                if resolved and resolved.lower() != title.lower():
+                    article = await try_mw_extract(api_url, resolved)
+                    if article:
+                        return article
             except Exception as e:
                 last_err = e
                 continue
 
-        # Fallback: REST HTML endpoint (works when extracts are empty), with host fallback too.
+        # Fallback: REST HTML endpoint (works when extracts are empty).
         configured_rest = (settings.ruwiki_rest_api_base or "https://ruwiki.ru/api/rest_v1").rstrip("/")
-        # Try ruwiki.ru first even if configured points to ru.ruwiki.ru (it often returns error pages / 5xx).
-        rest_candidates = ["https://ruwiki.ru/api/rest_v1", configured_rest]
-        if "ru.ruwiki.ru" in (settings.ruwiki_rest_api_base or ""):
-            rest_candidates.append("https://ru.ruwiki.ru/api/rest_v1")
+        rest_candidates = ["https://ruwiki.ru/api/rest_v1"]
+        if configured_rest != rest_candidates[0]:
+            rest_candidates.append(configured_rest)
         html = ""
         for rest_base in dict.fromkeys(rest_candidates):
             try:
@@ -186,7 +229,7 @@ async def fetch_article(query: str) -> RuwikiArticle:
 
         if not html:
             # Last resort: fetch the normal wiki page HTML (often works even when APIs are blocked).
-            for page_url in _site_page_candidates(encoded):
+            for page_url in _site_page_candidates(encoded)[:2]:
                 try:
                     if attempts >= max_attempts:
                         break
@@ -221,7 +264,9 @@ async def fetch_article(query: str) -> RuwikiArticle:
                 raise ValueError(f"ruwiki_fetch_failed:http_{code}:{url}")
             if isinstance(last_err, httpx.TimeoutException):
                 raise ValueError("ruwiki_fetch_failed:timeout")
-            raise ValueError(f"ruwiki_fetch_failed:{type(last_err).__name__ if last_err else 'unknown'}")
+            if isinstance(last_err, ValueError):
+                raise ValueError(f"ruwiki_fetch_failed:{last_err}")
+            raise ValueError(f"ruwiki_fetch_failed:{type(last_err).__name__ if last_err else 'no_successful_attempts'}")
 
     text = _html_to_text(html)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()

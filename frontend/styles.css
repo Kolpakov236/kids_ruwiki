@@ -1,8 +1,14 @@
 :root {
   color-scheme: light;
-  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #fff7ed;
-  color: #182235;
+  --ink: #1e2a3b;
+  --violet: #7c5cff;
+  --sun: #ffb347;
+  --mint: #5eead4;
+  --sky: #7dd3fc;
+  --card: rgba(255, 255, 255, 0.88);
+  font-family: "Nunito", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #fff8f0;
+  color: var(--ink);
 }
 
 * {
@@ -12,13 +18,77 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 10% 10%, rgba(255, 197, 87, 0.32), transparent 30%),
-    radial-gradient(circle at 90% 0%, rgba(125, 211, 252, 0.3), transparent 28%),
-    linear-gradient(135deg, #fff7ed 0%, #eef7ff 52%, #f7f2ff 100%);
+  position: relative;
+  overflow-x: hidden;
+  background: linear-gradient(
+    125deg,
+    #fff8f0,
+    #e0f2fe,
+    #fce7f3,
+    #fef9c3,
+    #ecfccb,
+    #fff8f0
+  );
+  background-size: 420% 420%;
+  animation: bodyGradientShift 22s ease infinite;
+}
+
+@keyframes bodyGradientShift {
+  0% {
+    background-position: 0% 40%;
+  }
+  50% {
+    background-position: 100% 60%;
+  }
+  100% {
+    background-position: 0% 40%;
+  }
+}
+
+.bgDecor {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  mix-blend-mode: multiply;
+  opacity: 0.85;
+  background-image:
+    radial-gradient(ellipse 80% 60% at 15% 25%, rgba(124, 92, 255, 0.2), transparent 55%),
+    radial-gradient(ellipse 70% 55% at 85% 15%, rgba(56, 189, 248, 0.18), transparent 50%),
+    radial-gradient(ellipse 90% 70% at 50% 90%, rgba(251, 191, 36, 0.12), transparent 55%),
+    radial-gradient(ellipse 60% 50% at 70% 65%, rgba(244, 114, 182, 0.1), transparent 48%);
+  background-size: 140% 140%;
+  animation:
+    decorDrift 32s ease-in-out infinite alternate,
+    meshHue 48s linear infinite;
+}
+
+@keyframes decorDrift {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+    background-position: 0% 50%;
+  }
+  to {
+    transform: translate3d(-3%, 2%, 0) scale(1.05);
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes meshHue {
+  0% {
+    filter: hue-rotate(0deg) saturate(1);
+  }
+  50% {
+    filter: hue-rotate(18deg) saturate(1.08);
+  }
+  100% {
+    filter: hue-rotate(0deg) saturate(1);
+  }
 }
 
 .page {
+  position: relative;
+  z-index: 1;
   width: min(1120px, calc(100% - 32px));
   margin: 0 auto;
   padding: 34px 0 48px;
@@ -51,7 +121,7 @@ body {
   height: 28px;
   place-items: center;
   border-radius: 10px;
-  background: #6d5dfc;
+  background: linear-gradient(135deg, var(--violet), #38bdf8);
   color: #fff;
 }
 
@@ -62,6 +132,10 @@ body {
 
 .healthBadge.offline {
   color: #b42318;
+}
+
+.healthBadge.checking {
+  opacity: 0.88;
 }
 
 .card {
@@ -82,17 +156,17 @@ body {
   min-height: 330px;
   margin-bottom: 20px;
   padding: 34px;
-  border-radius: 34px;
+  border-radius: 36px;
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(239, 246, 255, 0.78)),
-    linear-gradient(135deg, #ffe4ad, #bae6fd);
-  box-shadow: 0 30px 90px rgba(43, 108, 176, 0.18);
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(240, 249, 255, 0.82)),
+    linear-gradient(135deg, #ffe8c8, #bae6fd 48%, #e9d5ff);
+  box-shadow: 0 28px 80px rgba(76, 111, 168, 0.22);
   overflow: hidden;
 }
 
 .eyebrow {
-  color: #6d5dfc;
-  font-weight: 700;
+  color: #6b4dff;
+  font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   margin: 0 0 8px;
@@ -176,8 +250,363 @@ h2 {
 }
 
 .bubble.accent {
-  background: #6d5dfc;
+  background: linear-gradient(135deg, var(--violet), #2563eb);
   color: #fff;
+}
+
+.float-soft {
+  animation: floatSoft 5s ease-in-out infinite;
+}
+
+.delay-1 {
+  animation-delay: 0.6s;
+}
+
+.delay-2 {
+  animation-delay: 1.2s;
+}
+
+@keyframes floatSoft {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.7s ease both;
+}
+
+.fade-in-up {
+  animation: fadeInUp 0.75s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.delay-1.fade-in-up {
+  animation-delay: 0.08s;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.pop-in {
+  animation: popIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body {
+    animation: none !important;
+    background-size: auto;
+  }
+
+  .bgDecor,
+  .float-soft,
+  .fade-in,
+  .fade-in-up,
+  .pop-in {
+    animation: none !important;
+  }
+
+  .bgDecor {
+    opacity: 0.55;
+    filter: none;
+  }
+}
+
+.kidSection {
+  margin: 8px 0 12px;
+  padding: 18px 20px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(255, 237, 213, 0.65), rgba(224, 231, 255, 0.55));
+  border: 1px dashed rgba(124, 92, 255, 0.28);
+}
+
+.kidHeading {
+  margin: 0 0 6px;
+  font-size: 1.15rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kidIcon {
+  font-size: 1.25rem;
+}
+
+.kidHint {
+  margin: 0 0 14px;
+  color: #5a6b82;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.interestChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.interestChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 2px solid rgba(124, 92, 255, 0.22);
+  background: rgba(255, 255, 255, 0.92);
+  color: #334155;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    border-color 0.2s ease,
+    background 0.2s ease;
+}
+
+.interestChip:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(91, 108, 176, 0.18);
+}
+
+.interestChip.is-selected {
+  border-color: rgba(124, 92, 255, 0.85);
+  background: linear-gradient(135deg, rgba(124, 92, 255, 0.18), rgba(56, 189, 248, 0.14));
+  box-shadow: 0 10px 26px rgba(124, 92, 255, 0.22);
+}
+
+.chipEmoji {
+  font-size: 1.15rem;
+}
+
+.accuracyStrip {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 18px 20px;
+  margin-bottom: 22px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgba(94, 234, 212, 0.22), rgba(124, 92, 255, 0.12));
+  border: 1px solid rgba(94, 234, 212, 0.45);
+}
+
+.accuracyRing {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  flex-shrink: 0;
+}
+
+.accuracyRing svg {
+  width: 72px;
+  height: 72px;
+  transform: rotate(-90deg);
+}
+
+.accuracyBg {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.65);
+  stroke-width: 3.2;
+}
+
+.accuracyArc {
+  fill: none;
+  stroke: var(--violet);
+  stroke-width: 3.4;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.accuracyPercent {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+  font-size: 1rem;
+  color: #1e293b;
+}
+
+.accuracyCopy {
+  flex: 1;
+  min-width: 200px;
+}
+
+.accuracyTitle {
+  margin: 0 0 4px;
+  font-weight: 900;
+  font-size: 1.05rem;
+  color: #0f172a;
+}
+
+.accuracyMetric {
+  margin: 0;
+  font-weight: 700;
+  color: #475569;
+  font-size: 0.98rem;
+}
+
+.accuracyDetail {
+  margin: 8px 0 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #334155;
+  line-height: 1.4;
+}
+
+.accuracyPills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.accuracyPill {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 800;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(124, 92, 255, 0.2);
+  color: #475569;
+}
+
+.accuracyHint {
+  margin: 8px 0 0;
+  font-size: 0.88rem;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.qualityPanel {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 12px;
+  margin: 0 0 22px;
+}
+
+.qualityCard {
+  padding: 14px 16px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  box-shadow: 0 12px 28px rgba(49, 59, 84, 0.08);
+}
+
+.qualityLabel {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.75rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.qualityCard strong {
+  display: block;
+  font-size: 1.35rem;
+  line-height: 1;
+  color: #1e293b;
+}
+
+.qualityCard small {
+  display: block;
+  margin-top: 6px;
+  color: #64748b;
+  font-weight: 700;
+}
+
+.qualityPanel.isGood .qualityCard {
+  border-color: rgba(94, 234, 212, 0.55);
+}
+
+.learningBlock {
+  margin-bottom: 18px;
+}
+
+.kidBanner {
+  margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.15rem;
+}
+
+.learningSteps {
+  margin: 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 10px;
+}
+
+.learningSteps li {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  line-height: 1.45;
+  font-weight: 650;
+}
+
+.reasoningDetails {
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.95);
+  border: 1px solid #e2e8f0;
+}
+
+.reasoningDetails summary {
+  font-weight: 900;
+  cursor: pointer;
+  color: #475569;
+}
+
+.reasoningSteps {
+  margin: 12px 0 0;
+  padding-left: 20px;
+  color: #52627a;
+  line-height: 1.55;
+}
+
+.howItWorks {
+  background: rgba(255, 255, 255, 0.65);
 }
 
 .sectionTitle {
@@ -296,6 +725,10 @@ button:disabled {
   grid-template-columns: 0.7fr 1fr 1.3fr;
 }
 
+.formGrid.pair {
+  grid-template-columns: 1fr 1fr;
+}
+
 .status {
   min-height: 24px;
   margin: 16px 0 0;
@@ -410,6 +843,7 @@ button:disabled {
   border-radius: 22px;
   background: linear-gradient(135deg, #ffffff, #f8fbff);
   border: 1px solid #e4ebf5;
+  min-height: 180px;
 }
 
 .grid {
@@ -567,6 +1001,8 @@ details summary {
   .hero,
   .formGrid,
   .formGrid.three,
+  .formGrid.pair,
+  .qualityPanel,
   .resultLayout,
   .progress {
     grid-template-columns: 1fr;

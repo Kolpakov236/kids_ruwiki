@@ -26,7 +26,13 @@ def _is_llm_request(e: Exception) -> bool:
 @router.post("/simplify", response_model=SimplifyResponse)
 async def simplify(req: SimplifyRequest) -> SimplifyResponse:
     try:
-        return await simplify_pipeline(query=req.query, age=req.age, mode=req.mode)
+        return await simplify_pipeline(
+            query=req.query,
+            age=req.age,
+            mode=req.mode,
+            interest_topics=req.interest_topics,
+            child_notes=req.child_notes,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except LLMError as e:
@@ -78,6 +84,8 @@ def _public_llm_error(detail: str) -> str:
         return "Модель вернула поврежденный JSON. Повторите запрос или увеличьте LLM_NUM_PREDICT."
     if detail.startswith("quality_gate_failed"):
         return "Ответ не прошел проверку качества: он выглядит неполным. Повторите запрос."
+    if detail.startswith("ruwiki_fetch_failed"):
+        return f"Не удалось быстро получить статью Рувики: {detail}. Попробуйте точное название статьи или повторите запрос."
     if detail == "gemini_api_key_required":
         return "Не найден API-ключ Gemini. Укажите LLM_API_KEY, GEMINI_API_KEY или GOOGLE_API_KEY в backend/.env."
     return detail

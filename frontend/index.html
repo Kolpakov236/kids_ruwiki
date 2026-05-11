@@ -3,43 +3,47 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Ruwiki Explain</title>
-    <meta name="description" content="Понятные объяснения для детей 8–14 лет: главная мысль, простой текст, термины, примеры и мини‑викторина.">
+    <title>Ruwiki Explain — просто о сложном</title>
+    <meta name="description" content="Понятные объяснения для детей 6–14 лет: возрастная адаптация, интересы ребёнка, метрики качества и мини‑викторина.">
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;700;800;900&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./styles.css" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📚</text></svg>">
   </head>
   <body>
+    <div class="bgDecor" aria-hidden="true"></div>
     <main class="page">
-      <header class="topbar">
+      <header class="topbar fade-in">
         <div class="brand">
           <span class="brandMark">Р</span>
           <span>Ruwiki Explain</span>
         </div>
-        <div id="healthBadge" class="healthBadge">Проверка сервиса...</div>
+        <div id="healthBadge" class="healthBadge">Связь с API…</div>
       </header>
 
-      <section class="hero">
+      <section class="hero fade-in-up">
         <div class="heroText">
-          <p class="eyebrow">Понятно и коротко</p>
-          <h1>Объяснение сложных тем простыми словами</h1>
-          <p class="lead">Введите тему — получите главную мысль, простое объяснение, термины, пример и 3 вопроса.</p>
+          <p class="eyebrow">Учимся с улыбкой</p>
+          <h1>Сложные темы — простыми словами</h1>
+          <p class="lead">Выбери интересы, расскажи немного о себе — и получи главную мысль, понятный текст по шагам, термины и игру на память.</p>
           <div class="badges">
-            <span>Для 8-14 лет</span>
-            <span>Проверка качества</span>
-            <span>Озвучка</span>
-            <span>Кэш</span>
+            <span>6–14 лет</span>
+            <span>Пошагово</span>
+            <span>Персонализация</span>
+            <span>ROUGE / BLEURT‑proxy</span>
           </div>
         </div>
         <div class="heroPanel" aria-hidden="true">
-          <div class="bubble large">Главная мысль в одну фразу</div>
-          <div class="bubble">Сложные слова становятся понятными</div>
-          <div class="bubble accent">3 вопроса для закрепления</div>
+          <div class="bubble large float-soft">Сначала думаем — потом объясняем</div>
+          <div class="bubble float-soft delay-1">Твои интересы попадают в примеры</div>
+          <div class="bubble accent float-soft delay-2">В конце — маленькая викторина</div>
         </div>
       </section>
 
-      <section class="card controls">
+      <section class="card controls fade-in-up delay-1">
         <div class="sectionTitle">
-          <p class="eyebrow">Пример</p>
+          <p class="eyebrow">Запрос</p>
           <h2>Что объяснить?</h2>
         </div>
 
@@ -52,17 +56,28 @@
 
         <label>
           Тема
-          <textarea id="query" maxlength="100" rows="3" placeholder="Например: квантовая механика, фотосинтез, Древний Египет, электричество, иммунитет"></textarea>
-          <div class="hint">Введите тему или название статьи</div>
+          <textarea id="query" maxlength="100" rows="3" placeholder="Например: электричество, иммунитет, динозавры"></textarea>
+          <div class="hint">Можно как в википедии — коротко назвать тему</div>
         </label>
 
-        <div class="formGrid three">
+        <div class="kidSection">
+          <h3 class="kidHeading"><span class="kidIcon" aria-hidden="true">⭐</span> Что тебе интересно?</h3>
+          <p class="kidHint">Нажми несколько картинок-тем — мы используем это для примеров и аналогий.</p>
+          <div id="interestChips" class="interestChips" aria-label="Интересы"></div>
+        </div>
+
+        <div class="formGrid pair">
           <label>
             Возраст
             <select id="age">
+              <option value="6">6 лет</option>
+              <option value="7">7 лет</option>
               <option value="8">8 лет</option>
+              <option value="9">9 лет</option>
               <option value="10" selected>10 лет</option>
+              <option value="11">11 лет</option>
               <option value="12">12 лет</option>
+              <option value="13">13 лет</option>
               <option value="14">14 лет</option>
             </select>
           </label>
@@ -74,17 +89,22 @@
               <option value="detailed">Подробнее</option>
             </select>
           </label>
-          <div></div>
         </div>
-        
+
+        <label>
+          Коротко о себе
+          <textarea id="childNotes" maxlength="280" rows="2" placeholder="Например: люблю кошек, играю в футбол, боюсь темноты — без медицинских диагнозов"></textarea>
+          <div class="hint">Необязательно. Намёки на интересы и характер — чтобы текст звучал «про тебя».</div>
+        </label>
+
         <div class="formGrid">
           <label class="backendField full">
             API сервера
             <input id="backendUrl" type="url" value="http://127.0.0.1:8000" />
-            <div class="hint">URL вашего backend API</div>
+            <div class="hint">Полный адрес с http:// (например http://127.0.0.1:8000). Без схемы запрос уйдёт не на тот порт. Откройте фронт через http://, а не file://</div>
           </label>
         </div>
-        
+
         <div class="actions">
           <button id="submitBtn" class="primaryBtn" type="button">Упростить текст</button>
           <button id="micBtn" class="ghostBtn" type="button">Говорить</button>
@@ -94,23 +114,63 @@
         <p id="status" class="status"></p>
         <div id="progress" class="progress hidden">
           <span>Ищу статью</span>
-          <span>Выделяю главное</span>
+          <span>Думаю по шагам</span>
           <span>Пишу понятный текст</span>
-          <span>Проверяю качество</span>
+          <span>Проверяю факты</span>
         </div>
-        
-        <div class="infoBox">
-          <h3>Как это работает?</h3>
+
+        <div class="infoBox howItWorks">
+          <h3>Как это устроено?</h3>
           <ol class="steps">
-            <li>Находит статью по теме</li>
-            <li>Берёт ключевой фрагмент текста</li>
-            <li>Генерирует объяснение под выбранный возраст</li>
-            <li>Проверяет качество и кэширует успешные ответы</li>
+            <li>Сначала проверяем быстрый кэш по похожим запросам и возрастной группе</li>
+            <li>Если кэша нет — находим статью в Рувики и берём важный фрагмент</li>
+            <li>Модель выбирает стратегию: фактологический или причинно‑следственный ответ</li>
+            <li>Считаем ROUGE, BLEURT‑proxy и достоверность — затем сохраняем лучший ответ</li>
           </ol>
         </div>
       </section>
 
-      <section id="result" class="card result hidden">
+      <section id="result" class="card result hidden fade-in-up">
+        <div class="accuracyStrip" id="accuracyStrip">
+          <div class="accuracyRing" aria-hidden="true">
+            <svg viewBox="0 0 36 36">
+              <path class="accuracyBg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+              <path id="accuracyArc" class="accuracyArc" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+            </svg>
+            <span id="accuracyPercent" class="accuracyPercent">—</span>
+          </div>
+          <div class="accuracyCopy">
+            <p class="accuracyTitle">Достоверность ответа</p>
+            <p id="accuracyLabel" class="accuracyMetric">Комбинированная метрика</p>
+            <p id="accuracyDetail" class="accuracyDetail"></p>
+            <div id="accuracyPills" class="accuracyPills" aria-label="Разбор метрики"></div>
+            <p id="accuracyHint" class="accuracyHint"></p>
+          </div>
+        </div>
+
+        <div class="qualityPanel">
+          <div class="qualityCard">
+            <span class="qualityLabel">ROUGE‑1</span>
+            <strong id="rouge1Score">—</strong>
+            <small>ключевые слова</small>
+          </div>
+          <div class="qualityCard">
+            <span class="qualityLabel">ROUGE‑L</span>
+            <strong id="rougeLScore">—</strong>
+            <small>порядок фактов</small>
+          </div>
+          <div class="qualityCard">
+            <span class="qualityLabel">BLEURT‑proxy</span>
+            <strong id="bleurtScore">—</strong>
+            <small>естественность</small>
+          </div>
+          <div class="qualityCard">
+            <span class="qualityLabel">Скорость</span>
+            <strong id="latencyScore">—</strong>
+            <small>ответ / кэш</small>
+          </div>
+        </div>
+
         <div class="resultHeader">
           <div>
             <p class="eyebrow">Результат</p>
@@ -122,6 +182,16 @@
             <button id="speakBtn" class="ghostBtn" type="button">Озвучить</button>
           </div>
         </div>
+
+        <div id="learningBlock" class="learningBlock hidden">
+          <h3 class="kidBanner"><span>📌</span> Узнаём по шагам</h3>
+          <ol id="learningSteps" class="learningSteps"></ol>
+        </div>
+
+        <details id="reasoningDetails" class="reasoningDetails hidden">
+          <summary>Как модель думала по порядку</summary>
+          <ol id="reasoningSteps" class="reasoningSteps"></ol>
+        </details>
 
         <div class="resultLayout">
           <aside class="sourceBox">
@@ -158,9 +228,9 @@
           <pre id="meta"></pre>
         </details>
       </section>
-      
+
       <footer class="footer">
-        <p>© 2024 Ruwiki Explain.</p>
+        <p>© 2026 Ruwiki Explain.</p>
         <p>Источник статей: Рувики (CC BY-SA 3.0).</p>
       </footer>
     </main>
