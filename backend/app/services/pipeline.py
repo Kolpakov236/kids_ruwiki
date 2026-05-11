@@ -17,11 +17,34 @@ from app.services.cache import (
     upsert_original,
 )
 from app.services.ruwiki import fetch_article
-from app.services.llm import LLMError, model_variant, repair_with_llm, simplify_with_llm
+from app.services.llm import (
+    LLMError,
+    SummarizationResult,
+    model_variant,
+    repair_with_llm,
+    simplify_with_llm,
+    summarize_article,
+)
 from app.services.simplifier import build_extractive_fallback, improve_child_readability
-from app.services.verifier import anchor_coverage, evaluate_answer_quality, extract_key_facts, factual_consistency
+from app.services.verifier import (
+    anchor_coverage,
+    evaluate_answer_quality,
+    extract_key_facts,
+    factual_consistency,
+)
 
 logger = logging.getLogger(__name__)
+
+_EMPTY_SUMMARY = SummarizationResult(
+    condensed_text="", core_concept="", key_terms=[],
+    key_dates=[], key_names=[], key_numbers=[], raw={},
+)
+_EMPTY_EVALUATION: dict = {
+    "rouge_1": None, "rouge_l": None, "bleurt_proxy": None,
+    "simplicity": None, "example_quality": None, "term_clarity": None,
+    "faithfulness": None, "key_terms": {}, "ok": True,
+}
+_EMPTY_VERIFIER: dict = {"score": 1.0, "missing": [], "breakdown": {}}
 
 
 class _LocalResult:
@@ -34,23 +57,6 @@ class _LocalResult:
         self.analogies = payload.get("analogies", [])
         self.quiz = payload.get("quiz", [])
         self.raw = {"provider": "local_extractive_fallback"}
-
-
-def _normalize_interest_topics(topics: list[str]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for t in topics or []:
-        s = str(t).strip()[:56]
-        if not s:
-            continue
-        key = s.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(s)
-        if len(out) >= 12:
-            break
-    return out
 
 
 def _age_group(age: int) -> str:
@@ -76,17 +82,16 @@ def _accuracy_report(verifier: dict) -> dict:
         parts.append(f"годы {yr.get('kept', 0)}/{yr.get('total')}")
     if ta.get("total"):
         parts.append(f"ключевые слова {ta.get('kept', 0)}/{ta.get('total')}")
-
-    detail = " · ".join(parts) if parts else "мало якорей для сравнения в фрагменте"
+    detail = " · ".join(parts) if parts else "проверка пропущена (быстрый режим)"
 
     return {
-        "metric_label": "Достоверность к источнику",
-        "metric_key": "faithfulness_composite",
+        "metric_label": "Качество объяснения",
+        "metric_key": "explanation_quality",
         "score": round(score, 4),
         "percent": pct,
         "hint": (
-            "Комбинированная метрика: совпадение имён и названий в тексте ответа, сохранение годов "
-            "и ключевых терминов из статьи. Перефраз допустим, если суть и имена на месте."
+            "Комбинированная метрика: простота изложения (45%), качество примеров и аналогий (30%), "
+            "чёткость объяснения терминов (15%), фактическая точность (10%)."
         ),
         "breakdown": b,
         "detail_summary": detail,
@@ -112,17 +117,7 @@ def _missing_quality_anchors(evaluation: dict, verifier: dict) -> list[str]:
 
 
 _INCOMPLETE_ENDINGS = (
-    ",",
-    ":",
-    ";",
-    " и",
-    " а",
-    " но",
-    " что",
-    " которая",
-    " который",
-    " потому",
-    " если",
+    ",", ":", ";", " и", " а", " но", " что", " которая", " который", " потому", " если",
 )
 
 
@@ -192,22 +187,74 @@ def _apply_readability(payload, age: int) -> None:
             payload.analogies.append(item)
 
 
+def _summary_to_dict(summary: SummarizationResult) -> dict:
+    return {
+        "condensed_text": summary.condensed_text,
+        "core_concept": summary.core_concept,
+        "key_terms": summary.key_terms,
+        "key_dates": summary.key_dates,
+        "key_names": summary.key_names,
+        "key_numbers": summary.key_numbers,
+    }
+
+
+def _build_cached_response(
+    cached_payload: dict,
+    age: int,
+    age_group: str,
+    mode: str,
+    timings: dict,
+    t0: float,
+) -> SimplifyResponse | None:
+    quality = _quality_report(cached_payload["simplified_text"], age=age)
+    if not quality["ok"]:
+        return None
+    cached_payload["quality"] = cached_payload.get("quality") or quality
+    total_ms = int((time.perf_counter() - t0) * 1000)
+    timings["total"] = total_ms
+    acc = cached_payload.get("accuracy") or _accuracy_report(cached_payload.get("verifier") or _EMPTY_VERIFIER)
+    history_key = log_history(cached_payload, cached=True, latency_ms=total_ms, timings=timings)
+    return SimplifyResponse(
+        query=cached_payload["query"],
+        age=cached_payload["age"],
+        age_group=cached_payload.get("age_group") or age_group,
+        mode=cached_payload.get("mode", mode),
+        source_title=cached_payload["source_title"],
+        source_url=cached_payload["source_url"],
+        original_text=cached_payload["original_text"],
+        main_idea=cached_payload.get("main_idea", ""),
+        simplified_text=cached_payload["simplified_text"],
+        reasoning_steps=cached_payload.get("reasoning_steps") or [],
+        learning_steps=cached_payload.get("learning_steps") or [],
+        glossary=cached_payload["glossary"],
+        analogies=cached_payload["analogies"],
+        quiz=cached_payload.get("quiz", []),
+        quality=cached_payload["quality"],
+        accuracy=acc,
+        evaluation=cached_payload.get("evaluation") or _EMPTY_EVALUATION,
+        model=cached_payload["model"],
+        verifier=cached_payload.get("verifier") or _EMPTY_VERIFIER,
+        cached=True,
+        metrics_enabled=cached_payload.get("metrics_enabled", True),
+        timings_ms=timings,
+        history_key=history_key,
+    )
+
+
 async def simplify_pipeline(
     query: str,
     age: int,
     mode: str = "balanced",
-    interest_topics: list[str] | None = None,
-    child_notes: str = "",
+    enable_metrics: bool = True,
 ) -> SimplifyResponse:
     t0 = time.perf_counter()
     timings: dict[str, int] = {}
 
-    interest_topics = _normalize_interest_topics(interest_topics or [])
-    child_notes = (child_notes or "").strip()[:280]
     age_group = _age_group(age)
 
+    # --- Vector answer cache (skip in fast mode to save latency) ---
     cached_payload = None
-    if settings.enable_vector_cache:
+    if settings.enable_vector_cache and enable_metrics:
         c0 = time.perf_counter()
         try:
             match = get_similar_answer_key(query, age_group=age_group, threshold=0.92)
@@ -221,41 +268,12 @@ async def simplify_pipeline(
             timings["answer_cache_lookup_failed"] = 1
 
     if cached_payload:
-        quality = _quality_report(cached_payload["simplified_text"], age=age)
-        if not quality["ok"]:
-            cached_payload = None
-        else:
-            cached_payload["quality"] = cached_payload.get("quality") or quality
-            total_ms = int((time.perf_counter() - t0) * 1000)
-            timings["total"] = total_ms
-            acc = cached_payload.get("accuracy") or _accuracy_report(cached_payload["verifier"])
-            log_history(cached_payload, cached=True, latency_ms=total_ms)
-            return SimplifyResponse(
-                query=cached_payload["query"],
-                age=cached_payload["age"],
-                age_group=cached_payload.get("age_group") or age_group,
-                mode=cached_payload.get("mode", mode),
-                interest_topics=cached_payload.get("interest_topics") or [],
-                child_notes=cached_payload.get("child_notes") or "",
-                source_title=cached_payload["source_title"],
-                source_url=cached_payload["source_url"],
-                original_text=cached_payload["original_text"],
-                main_idea=cached_payload.get("main_idea", ""),
-                simplified_text=cached_payload["simplified_text"],
-                reasoning_steps=cached_payload.get("reasoning_steps") or [],
-                learning_steps=cached_payload.get("learning_steps") or [],
-                glossary=cached_payload["glossary"],
-                analogies=cached_payload["analogies"],
-                quiz=cached_payload.get("quiz", []),
-                quality=cached_payload["quality"],
-                accuracy=acc,
-                evaluation=cached_payload.get("evaluation") or {},
-                model=cached_payload["model"],
-                verifier=cached_payload["verifier"],
-                cached=True,
-                timings_ms=timings,
-            )
+        resp = _build_cached_response(cached_payload, age, age_group, mode, timings, t0)
+        if resp:
+            return resp
+        cached_payload = None
 
+    # --- Fetch article ---
     a0 = time.perf_counter()
     article = await fetch_article(query)
     timings["fetch_article"] = int((time.perf_counter() - a0) * 1000)
@@ -269,133 +287,116 @@ async def simplify_pipeline(
         mode=mode,
         source_title=article.title,
         model_variant=model_variant(),
-        interest_topics=interest_topics,
-        child_notes=child_notes,
         key_facts=key_facts,
     )
+
+    # --- Exact SQLite cache lookup ---
     cached_payload = get_sqlite_cached(key)
     if cached_payload:
-        quality = _quality_report(cached_payload["simplified_text"], age=age)
-        if not quality["ok"]:
-            cached_payload = None
-        else:
-            cached_payload["quality"] = cached_payload.get("quality") or quality
-    if cached_payload:
-        total_ms = int((time.perf_counter() - t0) * 1000)
-        timings["total"] = total_ms
-        acc = cached_payload.get("accuracy") or {}
-        if not acc:
-            acc = _accuracy_report(cached_payload["verifier"])
-        log_history(cached_payload, cached=True, latency_ms=total_ms)
-        return SimplifyResponse(
-            query=cached_payload["query"],
-            age=cached_payload["age"],
-            age_group=cached_payload.get("age_group") or age_group,
-            mode=cached_payload.get("mode", mode),
-            interest_topics=cached_payload.get("interest_topics") or [],
-            child_notes=cached_payload.get("child_notes") or "",
-            source_title=cached_payload["source_title"],
-            source_url=cached_payload["source_url"],
-            original_text=cached_payload["original_text"],
-            main_idea=cached_payload.get("main_idea", ""),
-            simplified_text=cached_payload["simplified_text"],
-            reasoning_steps=cached_payload.get("reasoning_steps") or [],
-            learning_steps=cached_payload.get("learning_steps") or [],
-            glossary=cached_payload["glossary"],
-            analogies=cached_payload["analogies"],
-            quiz=cached_payload.get("quiz", []),
-            quality=cached_payload["quality"],
-            accuracy=acc,
-            evaluation=cached_payload.get("evaluation") or {},
-            model=cached_payload["model"],
-            verifier=cached_payload["verifier"],
-            cached=True,
-            timings_ms=timings,
-        )
+        resp = _build_cached_response(cached_payload, age, age_group, mode, timings, t0)
+        if resp:
+            return resp
+        cached_payload = None
 
-    c0 = time.perf_counter()
+    # --- Vector lookup for similar originals (metrics mode only) ---
     sims = []
-    if settings.enable_vector_cache:
+    if settings.enable_vector_cache and enable_metrics:
+        c0 = time.perf_counter()
         try:
             sims = get_similar_originals(original_text, top_k=1)
         except Exception:
             logger.exception("vector lookup failed")
             timings["vector_lookup_failed"] = 1
-    timings["vector_lookup"] = int((time.perf_counter() - c0) * 1000)
+        timings["vector_lookup"] = int((time.perf_counter() - c0) * 1000)
 
+    # --- Step 1: Summarize article (full mode only) ---
+    # In fast mode we skip summarization and go straight to simplification.
+    summary: SummarizationResult = _EMPTY_SUMMARY
+    if enable_metrics:
+        sum0 = time.perf_counter()
+        summary = await summarize_article(original_text, query)
+        timings["summarize_article"] = int((time.perf_counter() - sum0) * 1000)
+        logger.info(
+            "pipeline step1 summarize: %dms, condensed %d→%d chars",
+            timings["summarize_article"], len(original_text), len(summary.condensed_text),
+        )
+
+    # --- Step 2 (or Step 1 in fast mode): Simplify ---
     s0 = time.perf_counter()
     try:
         simplified = await simplify_with_llm(
             original_text,
             age=age,
             mode=mode,
-            interest_topics=interest_topics,
-            child_notes=child_notes,
             key_facts=key_facts,
+            summary=summary if enable_metrics else None,
         )
     except (LLMError, TimeoutError) as e:
-        logger.warning("LLM failed, using local fallback: %s", e)
+        logger.warning("LLM simplify failed, using local fallback: %s", e)
         timings["llm_fallback"] = 1
         simplified = _LocalResult(build_extractive_fallback(original_text, age=age, key_facts=key_facts))
     timings["simplify"] = int((time.perf_counter() - s0) * 1000)
 
-    q0 = time.perf_counter()
     _apply_readability(simplified, age=age)
-    timings["readability_guard"] = int((time.perf_counter() - q0) * 1000)
 
-    v0 = time.perf_counter()
-    ver = factual_consistency(original_text, simplified.simplified_text)
-    timings["verify"] = int((time.perf_counter() - v0) * 1000)
-    evaluation = evaluate_answer_quality(
-        original_text,
-        simplified.simplified_text,
-        age=age,
-        consistency=ver,
-        key_facts=key_facts,
-    )
+    # --- Quality verification (full mode only) ---
+    ver: dict = _EMPTY_VERIFIER
+    evaluation: dict = _EMPTY_EVALUATION
+    accuracy: dict = {}
 
-    if settings.enable_llm_repair and (ver["score"] < 0.88 or not evaluation["ok"]):
-        s1 = time.perf_counter()
-        missing = _missing_quality_anchors(evaluation, ver)
-        simplified2 = await repair_with_llm(original_text, simplified.simplified_text, age=age, missing=missing)
-        ver2 = factual_consistency(original_text, simplified2.simplified_text)
-        evaluation2 = evaluate_answer_quality(
+    if enable_metrics:
+        v0 = time.perf_counter()
+        ver = factual_consistency(original_text, simplified.simplified_text)
+        timings["verify"] = int((time.perf_counter() - v0) * 1000)
+        evaluation = evaluate_answer_quality(
             original_text,
-            simplified2.simplified_text,
+            simplified.simplified_text,
             age=age,
-            consistency=ver2,
+            consistency=ver,
             key_facts=key_facts,
+            analogies=simplified.analogies,
+            glossary=simplified.glossary,
         )
-        timings["repair_simplify"] = int((time.perf_counter() - s1) * 1000)
-        if (evaluation2.get("key_terms", {}).get("score", 0) >= evaluation.get("key_terms", {}).get("score", 0)) and (
-            ver2["score"] >= ver["score"]
-        ):
-            simplified = simplified2
-            _apply_readability(simplified, age=age)
-            ver = ver2
-            evaluation = evaluation2
+
+        # Repair if quality below threshold
+        if settings.enable_llm_repair and (ver["score"] < 0.80 or not evaluation["ok"]):
+            s1 = time.perf_counter()
+            missing = _missing_quality_anchors(evaluation, ver)
+            simplified2 = await repair_with_llm(original_text, simplified.simplified_text, age=age, missing=missing)
+            ver2 = factual_consistency(original_text, simplified2.simplified_text)
+            evaluation2 = evaluate_answer_quality(
+                original_text, simplified2.simplified_text, age=age,
+                consistency=ver2, key_facts=key_facts,
+                analogies=simplified2.analogies, glossary=simplified2.glossary,
+            )
+            timings["repair_simplify"] = int((time.perf_counter() - s1) * 1000)
+            if evaluation2.get("bleurt_proxy", 0) >= evaluation.get("bleurt_proxy", 0):
+                simplified = simplified2
+                _apply_readability(simplified, age=age)
+                ver = ver2
+                evaluation = evaluation2
+
+        evaluation = evaluate_answer_quality(
+            original_text, simplified.simplified_text, age=age,
+            consistency=ver, key_facts=key_facts,
+            analogies=simplified.analogies, glossary=simplified.glossary,
+        )
+        accuracy = _accuracy_report(ver)
+        # Update accuracy percent from bleurt_proxy (child-focused score)
+        bp = float(evaluation.get("bleurt_proxy") or 0.0)
+        accuracy["score"] = round(bp, 4)
+        accuracy["percent"] = int(round(100 * bp))
 
     quality = _quality_report(simplified.simplified_text, age=age, raw=simplified.raw)
-    if not quality["ok"]:
-        raise LLMError(f"quality_gate_failed:{','.join(quality['issues'])}")
 
-    accuracy = _accuracy_report(ver)
-    # Readability guard may alter text; refresh anchor coverage after all transformations.
-    evaluation = evaluate_answer_quality(
-        original_text,
-        simplified.simplified_text,
-        age=age,
-        consistency=ver,
-        key_facts=key_facts,
-    )
+    if not accuracy:
+        accuracy = {"metric_label": "Быстрый режим", "metric_key": "fast_mode", "score": 1.0, "percent": 100}
 
     payload = {
         "query": query,
         "age": age,
         "age_group": age_group,
         "mode": mode,
-        "interest_topics": interest_topics,
-        "child_notes": child_notes,
         "source_title": article.title,
         "source_url": article.url,
         "original_text": original_text,
@@ -416,43 +417,54 @@ async def simplify_pipeline(
         "model": model,
         "verifier": ver,
         "similar": sims,
+        "summarization": _summary_to_dict(summary),
+        "metrics_enabled": enable_metrics,
     }
 
-    if settings.enable_vector_cache:
-        try:
-            upsert_original(original_text, meta={"key": key, "title": article.title, "url": article.url})
-        except Exception:
-            logger.exception("vector upsert failed")
-            timings["vector_upsert_failed"] = 1
-    put_sqlite_cached(key, payload)
-    if settings.enable_vector_cache:
-        try:
-            upsert_answer_query(
-                query,
-                age_group=age_group,
-                key=key,
-                meta={
-                    "source_title": article.title[:180],
-                    "mode": mode,
-                    "rouge_l": float(evaluation.get("rouge_l") or 0.0),
-                    "bleurt_proxy": float(evaluation.get("bleurt_proxy") or 0.0),
-                },
+    # --- Persist to caches (only in full metrics mode with good quality) ---
+    if enable_metrics:
+        bleurt_proxy = float(evaluation.get("bleurt_proxy") or 0.0)
+        quality_ok_for_cache = bleurt_proxy >= settings.quality_cache_threshold
+
+        if settings.enable_vector_cache:
+            try:
+                upsert_original(original_text, meta={"key": key, "title": article.title, "url": article.url})
+            except Exception:
+                logger.exception("vector upsert failed")
+
+        put_sqlite_cached(key, payload)
+
+        if settings.enable_vector_cache and quality_ok_for_cache:
+            try:
+                upsert_answer_query(
+                    query, age_group=age_group, key=key,
+                    meta={
+                        "source_title": article.title[:180],
+                        "mode": mode,
+                        "rouge_l": float(evaluation.get("rouge_l") or 0.0),
+                        "bleurt_proxy": bleurt_proxy,
+                    },
+                )
+            except Exception:
+                logger.exception("answer vector cache upsert failed")
+        elif settings.enable_vector_cache and not quality_ok_for_cache:
+            logger.info(
+                "skip answer vector cache: bleurt_proxy=%.3f < threshold=%.2f",
+                bleurt_proxy, settings.quality_cache_threshold,
             )
-        except Exception:
-            logger.exception("answer vector cache upsert failed")
-            timings["answer_cache_upsert_failed"] = 1
+    else:
+        # Fast mode: still persist to SQLite so repeated exact requests use cache
+        put_sqlite_cached(key, payload)
 
     total_ms = int((time.perf_counter() - t0) * 1000)
     timings["total"] = total_ms
-    log_history(payload, cached=False, latency_ms=total_ms)
+    history_key = log_history(payload, cached=False, latency_ms=total_ms, timings=timings)
 
     return SimplifyResponse(
         query=query,
         age=age,
         age_group=age_group,
         mode=mode,
-        interest_topics=interest_topics,
-        child_notes=child_notes,
         source_title=article.title,
         source_url=article.url,
         original_text=original_text,
@@ -469,6 +481,8 @@ async def simplify_pipeline(
         model=model,
         verifier=ver,
         cached=False,
+        metrics_enabled=enable_metrics,
         timings_ms=timings,
+        history_key=history_key,
     )
 

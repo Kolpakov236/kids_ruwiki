@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -8,6 +9,19 @@ from typing import Any
 import httpx
 
 from app.settings import settings
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SummarizationResult:
+    condensed_text: str
+    core_concept: str
+    key_terms: list[dict[str, str]]
+    key_dates: list[str]
+    key_names: list[str]
+    key_numbers: list[str]
+    raw: dict[str, Any]
 
 
 @dataclass
@@ -27,57 +41,121 @@ class LLMError(RuntimeError):
 
 
 def model_variant() -> str:
-    return f"{settings.llm_provider}:{settings.llm_model}:fact-anchored-v1"
+    return f"{settings.llm_provider}:{settings.llm_model}:two-step-v2"
 
 
-def _system_prompt() -> str:
+# ---------------------------------------------------------------------------
+# Prompt builders — Step 1: Summarization
+# ---------------------------------------------------------------------------
+
+def _summarize_system_prompt() -> str:
     return (
-        "Ты редактор детской энциклопедии и опытный учитель. "
-        "Твоя задача — превращать сложный энциклопедический текст в ясное объяснение для детей 6-14 лет. "
-        "Сохраняй только факты из исходного текста. Главный приоритет — не потерять ключевые термины, формулы, единицы измерения, даты, имена и причинно-следственные связи. "
-        "Упрощай синтаксис, но не выкидывай научные понятия. "
-        "Имена людей, названия стран и организаций, важные даты и годы должны попасть в упрощённый текст так же, как в источнике "
-        "(им можно слегка сопроводить простым пояснением, но не заменять выдуманными названиями). "
-        "Если указаны интересы ребёнка — используй их только для понятных аналогий и примеров; новые факты из головы не придумывай. "
-        "Перед финальным текстом последовательно разберись: что главное, какие якорные факты нельзя потерять, "
-        "как объяснить простыми словами и как связать один пример с интересами без искажения смысла. "
-        "Пиши живо и спокойно. Без Markdown. Ответь только валидным JSON."
+        "Ты аналитик, который готовит материал для детского педагога. "
+        "Из статьи нужно извлечь не просто список фактов, а концептуальную структуру: "
+        "что это такое, как это работает (механизм/процесс), почему это происходит, "
+        "какие причинно-следственные связи ключевые. "
+        "Сохрани все конкретные факты: термины с определениями, даты, имена, числа, формулы, единицы. "
+        "Дополнительно укажи: в чём главная сложность объяснения этой темы детям, "
+        "какое самое частое неверное представление о ней. "
+        "Ничего не добавляй от себя — только то, что есть в тексте. "
+        "Ответь только валидным JSON."
     )
 
 
-def _age_style(age: int) -> str:
+def _summarize_user_prompt(text: str, query: str) -> str:
+    return (
+        f"Тема: {query}\n\n"
+        "Проанализируй статью и заполни JSON-структуру ниже.\n\n"
+        "condensed_text: связный текст, сохраняющий ВСЕ факты + причинно-следственные связи + механизм работы. "
+        "Убери вводные фразы и воду, но не теряй ни одного конкретного факта.\n"
+        "core_concept: одно предложение — суть явления и как оно работает.\n"
+        "core_mechanism: 2-3 предложения — пошаговое описание механизма/процесса.\n"
+        "main_misconception: типичное ошибочное представление об этой теме.\n"
+        "hardest_to_explain: что труднее всего объяснить ребёнку и почему.\n"
+        "key_terms: [{\"term\": ..., \"definition\": ...}] — термины с определениями.\n"
+        "key_dates: [\"год: что произошло\"]\n"
+        "key_names: [\"имя: кто это\"]\n"
+        "key_numbers: [\"число + единица: что означает\"]\n\n"
+        "Формат ответа (строго JSON):\n"
+        '{"condensed_text":"...","core_concept":"...","core_mechanism":"...",'
+        '"main_misconception":"...","hardest_to_explain":"...",'
+        '"key_terms":[{"term":"...","definition":"..."}],'
+        '"key_dates":["..."],"key_names":["..."],"key_numbers":["..."]}\n\n'
+        f"Текст статьи:\n{text}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Prompt builders — Step 2: Simplification
+# ---------------------------------------------------------------------------
+
+def _system_prompt() -> str:
+    return (
+        "Ты опытный педагог и автор детских научно-популярных книг. "
+        "Твоя задача — написать объяснение так, чтобы ребёнок не просто запомнил слова, "
+        "а понял, КАК это работает. Качественная планка: после прочтения ребёнок должен "
+        "суметь объяснить тему своими словами и предсказать, что случится в новой ситуации с этим явлением.\n"
+        "Принципы, которых придерживайся строго:\n"
+        "1. НЕ ИСТОРИЯ, А МЕХАНИЗМ. Никаких «учёные долго искали», «в XIX веке открыли», "
+        "«слово происходит от...» — если факт не объясняет КАК явление работает, его нет в тексте. "
+        "История открытия и биографии учёных в simplified_text запрещены.\n"
+        "2. КОНКРЕТНОЕ РАНЬШЕ АБСТРАКТНОГО. Начинай с поведения явления, которое можно представить — "
+        "не с определения и не с даты.\n"
+        "3. МЕХАНИЗМ ПОШАГОВО. Объясняй не «что это», а «что происходит шаг за шагом прямо сейчас».\n"
+        "4. АНАЛОГИЯ ПРОВЕРЯЕТ ПОНИМАНИЕ. Хорошая аналогия позволяет правильно ответить на вопрос "
+        "«что будет, если...». Плохая — просто похожа внешне. Выбирай аналогию, которая работает.\n"
+        "5. БЕЗ ПУСТЫХ ФРАЗ. Не пиши «это очень интересно» или «учёные долго исследовали» — "
+        "каждое предложение несёт конкретную информацию.\n"
+        "6. ТЕРМИНЫ НЕЛЬЗЯ ВЫБРАСЫВАТЬ. Каждый научный термин должен появиться с объяснением "
+        "рядом — в скобках или через тире.\n"
+        "Пиши без Markdown. Ответь только валидным JSON."
+    )
+
+
+def _age_instructions(age: int) -> str:
     if age <= 8:
-        return "очень короткие предложения до 8 слов, самые простые слова, примеры из игр, сказок и дома"
-    if age <= 11:
-        return "короткие предложения до 10-12 слов, простые термины с пояснениями, один яркий пример"
-    return "ясный подростковый стиль 12-14 лет, базовые научные понятия с живыми аналогиями, без канцелярита"
-
-
-def _mode_style(mode: str) -> str:
-    if mode == "simple":
-        return "максимально простое объяснение с бытовыми словами и минимумом деталей"
-    if mode == "detailed":
-        return "подробное объяснение с большим числом фактов, но без сложного языка"
-    return "сбалансированное объяснение: понятно, коротко и достаточно информативно"
-
-
-def _mode_lengths(mode: str) -> tuple[str, str, str]:
-    if mode == "simple":
         return (
-            "5-8 коротких предложений",
-            "4-5 шагов",
-            "3-4 пункта",
+            "ВОЗРАСТ 6-8 ЛЕТ. Правила:\n"
+            "- Предложения не длиннее 7 слов.\n"
+            "- Только слова, которые ребёнок знает из дома, мультиков, улицы.\n"
+            "- Каждый новый термин объясни через знакомый предмет: не «молекула», а «молекула — "
+            "это крохотный кусочек, меньше пылинки».\n"
+            "- Используй «ты», «представь себе», «посмотри вот как».\n"
+            "- Не больше 2 новых понятий за раз."
         )
-    if mode == "detailed":
+    if age <= 11:
         return (
-            "10-14 предложений",
-            "7-9 шагов",
-            "6-8 пунктов",
+            "ВОЗРАСТ 9-11 ЛЕТ. Правила:\n"
+            "- Предложения до 12 слов.\n"
+            "- Термины с немедленным пояснением: «фотосинтез — то, как растения делают еду из света».\n"
+            "- Опирайся на знания школьной программы (сложение, умножение, части тела, погода, страны).\n"
+            "- Можно один сравнительно сложный пример, если сначала дать простой.\n"
+            "- Задавай риторические вопросы: «Ты замечал, что...?»"
         )
     return (
-        "8-12 предложений",
-        "6-8 шагов",
-        "5-7 пунктов",
+        "ВОЗРАСТ 12-14 ЛЕТ. Правила:\n"
+        "- Ясный, прямой стиль без лишних слов.\n"
+        "- Научные термины можно использовать, но с чётким определением при первом появлении.\n"
+        "- Можно ссылаться на физику, химию, биологию на уровне 6-8 класса.\n"
+        "- Аналогии из технологий, спорта, современной жизни — они близки этому возрасту.\n"
+        "- Избегай покровительственного тона; пиши как для умного сверстника."
+    )
+
+
+def _mode_instructions(mode: str) -> str:
+    if mode == "simple":
+        return (
+            "РЕЖИМ: ОЧЕНЬ ПРОСТО. Одна ключевая идея, максимум 6 предложений, одна аналогия. "
+            "Всё второстепенное убрать."
+        )
+    if mode == "detailed":
+        return (
+            "РЕЖИМ: ПОДРОБНО. Включи все важные факты и причинно-следственные связи. "
+            "10-14 предложений, 2-3 аналогии под разными углами, полный глоссарий."
+        )
+    return (
+        "РЕЖИМ: СБАЛАНСИРОВАННО. 7-10 предложений. Главная идея + механизм + одна сильная аналогия. "
+        "Детали только если они помогают понять суть."
     )
 
 
@@ -85,85 +163,115 @@ def _output_schema_text() -> str:
     return (
         '{"main_idea":"...",'
         '"simplified_text":"...",'
-        '"reasoning_steps":["шаг размышления 1","..."],'
-        '"learning_steps":["что узнаём шаг 1","..."],'
+        '"reasoning_steps":["..."],'
+        '"learning_steps":["..."],'
         '"glossary":[{"term":"...","definition":"..."}],'
         '"analogies":["..."],'
         '"quiz":[{"question":"...","answer":"..."}]}'
     )
 
 
-def _personalization_block(interest_topics: list[str], child_notes: str) -> str:
-    topics = [t.strip() for t in interest_topics if t and str(t).strip()][:10]
-    notes = (child_notes or "").strip()
-    lines: list[str] = []
-    if topics:
-        lines.append(
-            "Интересы ребёнка (обязательно используй минимум одну бытовую аналогию или пример из этой области; "
-            "факты про тему статьи только из текста ниже): "
-            + ", ".join(topics)
-            + "."
-        )
-    if notes:
-        lines.append("Коротко о ребёнке (тон и примеры, без диагнозов и ярлыков): " + notes + ".")
-    if not lines:
-        return ""
-    return "\n".join(lines) + "\n"
-
-
 def _simplify_user_prompt(
     text: str,
     age: int,
     mode: str,
-    interest_topics: list[str],
-    child_notes: str,
     key_facts: dict | None = None,
+    summary: SummarizationResult | None = None,
 ) -> str:
-    extra = _personalization_block(interest_topics, child_notes)
-    slen, rlen, llen = _mode_lengths(mode)
     facts = key_facts or {}
     required_terms = [str(x) for x in facts.get("required_terms") or []][:48]
     formulas = [str(x) for x in facts.get("formulas") or []][:16]
+
+    if summary:
+        for item in summary.key_terms:
+            t = str(item.get("term") or "").strip()
+            if t and t not in required_terms:
+                required_terms.append(t)
+        for n in summary.key_numbers:
+            s = str(n).strip()
+            if s and s not in formulas:
+                formulas.append(s)
+
     fact_block = ""
     if required_terms:
-        fact_block += "ОБЯЗАТЕЛЬНЫЕ ТЕРМИНЫ И ФАКТЫ: " + "; ".join(required_terms) + ".\n"
+        fact_block += "ТЕРМИНЫ, КОТОРЫЕ ДОЛЖНЫ ПОЯВИТЬСЯ В ТЕКСТЕ: " + "; ".join(required_terms[:48]) + ".\n"
     if formulas:
-        fact_block += "ОБЯЗАТЕЛЬНЫЕ ФОРМУЛЫ / ОБОЗНАЧЕНИЯ / ЕДИНИЦЫ: " + "; ".join(formulas) + ".\n"
+        fact_block += "ФОРМУЛЫ / ЕДИНИЦЫ / ОБОЗНАЧЕНИЯ (сохрани дословно): " + "; ".join(formulas[:16]) + ".\n"
+
+    # Extract extra context from summary
+    mechanism_hint = ""
+    misconception_hint = ""
+    if summary:
+        raw = summary.raw or {}
+        core_mech = str(raw.get("core_mechanism") or "").strip()
+        misconception = str(raw.get("main_misconception") or "").strip()
+        hardest = str(raw.get("hardest_to_explain") or "").strip()
+        if core_mech:
+            mechanism_hint = f"МЕХАНИЗМ (обязательно объясни): {core_mech}\n"
+        if misconception:
+            misconception_hint = f"ЧАСТОЕ ЗАБЛУЖДЕНИЕ (опровергни мягко): {misconception}\n"
+        if hardest:
+            misconception_hint += f"ТРУДНЕЕ ВСЕГО ОБЪЯСНИТЬ: {hardest}\n"
+
+    reasoning_guide = (
+        "ШАГ 1 — Что здесь самое важное для понимания? "
+        "Сформулируй одно предложение — суть явления.\n"
+        "ШАГ 2 — Как это работает пошагово? Перечисли 3-5 шагов механизма.\n"
+        "ШАГ 3 — Какое типичное заблуждение детей об этой теме? "
+        "Как в объяснении его аккуратно исправить?\n"
+        "ШАГ 4 — Выбери ОДНУ аналогию, которая работает как тест: "
+        "если понял аналогию — можешь предсказать поведение оригинала. "
+        "Выбирай из: вода/трубы/насос, электрический ток, строительство, игра с правилами, "
+        "кулинария/смешивание, живой организм, транспортная сеть, склад/почта. "
+        "Объясни в reasoning_steps, ПОЧЕМУ именно эта аналогия — лучшая для этой темы.\n"
+        "ШАГ 5 — Спланируй структуру simplified_text:\n"
+        "  а) КРЮЧОК (1-2 предл.): удивительный факт о том, КАК явление себя ведёт прямо сейчас — "
+        "без определений, без истории открытия, без имён учёных.\n"
+        "  б) МЕХАНИЗМ (3-5 предл.): что происходит шаг за шагом.\n"
+        "  в) СМЫСЛ (1-2 предл.): зачем это нужно, где встречается в жизни.\n"
+        "  г) АНАЛОГИЯ (1-3 предл.): та самая, из шага 4 — она должна ОБЪЯСНЯТЬ, не украшать.\n"
+        "  д) ВОПРОС (1 предл.): «А ты знаешь...?» или «Хочешь узнать, почему...?»"
+    )
+
+    quiz_guide = (
+        "quiz — РОВНО 3 вопроса, каждый проверяет ПОНИМАНИЕ, а не память:\n"
+        "  Q1: вопрос на механизм — «Почему...» или «Что происходит, когда...»\n"
+        "  Q2: вопрос на применение — «Где в жизни ты встречаешь...» или «Что изменится, если...»\n"
+        "  Q3: вопрос-объяснение — «Как бы ты объяснил другу, что такое...»\n"
+        "Ответы — короткие (1-2 предложения), но полные."
+    )
+
+    glossary_guide = (
+        "glossary — 3-5 терминов. Каждое определение:\n"
+        "  - заканчивается конкретным примером из жизни\n"
+        "  - написано на языке указанного возраста\n"
+        "  - нет круговых определений (X — это когда X)"
+    )
+
+    analogies_guide = (
+        "analogies — 2-3 строки, каждая начинается с «Представь...» или «Это как...». "
+        "Они должны помогать ПРЕДСКАЗЫВАТЬ поведение явления, а не просто звучать красиво. "
+        "Разные аналогии — разные углы зрения на ту же идею."
+    )
+
     return (
-        f"Возраст: {age} лет.\n"
-        f"Стиль: {_age_style(age)}.\n"
-        f"Режим: {_mode_style(mode)}.\n"
-        + (extra if extra else "")
+        f"{_age_instructions(age)}\n\n"
+        f"{_mode_instructions(mode)}\n\n"
         + fact_block
-        + "Сначала последовательно размышляй (поле reasoning_steps). Структура рассуждения:\n"
-        "1) Перечисли обязательные термины, формулы, обозначения, единицы, имена и числа, которые нельзя потерять.\n"
-        "2) Составь план так, чтобы каждый обязательный термин появился в simplified_text дословно или почти дословно.\n"
-        "3) Сохрани определения из оригинала: можно укоротить фразу, но нельзя менять смысл.\n"
-        "4) Только после фактов добавь одну короткую аналогию; аналогия не заменяет термины и формулы.\n"
-        f"Поле learning_steps: {llen} коротких шагов «что узнаём по порядку» для ребёнка.\n"
-        "Перефразируй текст так, будто объясняешь тему после школы.\n"
-        "Требования к качеству:\n"
-        f"- В simplified_text: {slen}, но если обязательных терминов много, лучше 12-16 предложений, чем потеря фактов.\n"
-        "- Сначала главная идея, затем важные детали и связь между ними.\n"
-        "- Каждый сложный термин сразу объясни простыми словами рядом.\n"
-        "- Замени канцелярит обычной речью, но сами научные термины сохраняй.\n"
-        "- Имена, даты, места и числа из статьи сохраняй; не подменяй вымышленными названиями.\n"
-        "- Формулы, обозначения и единицы измерения перепиши дословно, если они есть в обязательном списке.\n"
-        "- Ожидаемый ROUGE-1 по обязательным терминам должен быть не ниже 0.60: проверь себя перед ответом.\n"
-        "- Не добавляй фактов вне исходного текста.\n"
-        "- Если интересы указаны: минимум одна ясная аналогия из этой области (без новых фактов про тему).\n"
-        "- Если интересов нет: одна жизненная аналогия из школьного или домашнего опыта.\n"
-        "- 3 вопроса мини-викторины с короткими ответами.\n"
-        "- Глоссарий: 3-5 самых нужных терминов.\n"
-        f"- reasoning_steps: {rlen}, каждый пункт — одно законченное наблюдение на русском.\n"
-        "- analogies: 2-3 короткие строки (разные углы), хотя бы одна про интересы, если они есть.\n"
-        "- В simplified_text используй 2-3 уместных эмодзи для визуальных акцентов (например 🔍, 💡, 🚀), но не перегружай.\n"
-        "- В конце simplified_text добавь один вопрос-вовлечение: «Хочешь узнать...» или «А знаешь ли ты...?».\n"
-        "- Персонализация: не больше одной метафоры из интересов ребёнка, чтобы украшение не вытеснило факты.\n"
-        "- Без Markdown, без **жирного**, без #, без HTML.\n"
-        "- В simplified_text не используй маркированные списки и кавычки-ёлочки.\n"
-        f"Верни строго JSON: {_output_schema_text()}\n"
-        "Текст:\n"
+        + mechanism_hint
+        + misconception_hint
+        + "\n--- РАССУЖДЕНИЕ (reasoning_steps) ---\n"
+        + reasoning_guide
+        + "\n\n--- ТРЕБОВАНИЯ К ВЫХОДНЫМ ПОЛЯМ ---\n"
+        + quiz_guide + "\n"
+        + glossary_guide + "\n"
+        + analogies_guide + "\n"
+        "main_idea — одно предложение, суть темы, понятная без контекста.\n"
+        "learning_steps — 4-6 шагов «что узнаём»: коротко, по порядку, для ребёнка.\n"
+        "В simplified_text: 2-3 эмодзи для акцентов (🔍 💡 🌱 и т.п.). "
+        "Без Markdown, без звёздочек, без списков с дефисами.\n\n"
+        f"Верни строго JSON: {_output_schema_text()}\n\n"
+        "--- ТЕКСТ ДЛЯ ОБРАБОТКИ ---\n"
         f"{text}"
     )
 
@@ -171,32 +279,27 @@ def _simplify_user_prompt(
 def _repair_user_prompt(original: str, simplified: str, age: int, missing: list[str]) -> str:
     return json.dumps(
         {
-            "task": "repair_simplification_fact_loss",
+            "task": "repair_simplification",
             "age": age,
-            "missing_entities_or_facts": missing,
+            "missing_items": missing,
             "rules": [
-                "Вставь в simplified_text каждый missing item — дословно или почти дословно из original_text.",
-                "Если missing item — формула, обозначение или единица измерения, перепиши его дословно.",
-                "Если не помещается в одно предложение, добавь отдельное короткое предложение.",
-                "Сохрани детский стиль и простые слова; не добавляй новых фактов кроме возвращённых элементов.",
-                "Не удаляй уже удачные части ответа.",
+                "Вставь каждый missing item в simplified_text дословно или почти дословно.",
+                "Если это формула или единица измерения — перепиши дословно.",
+                "Сохрани детский стиль и структуру: крючок → механизм → смысл → аналогия → вопрос.",
+                "Не удаляй уже удачные части. Не добавляй новых фактов кроме возвращённых.",
                 "Отвечай тем же JSON schema.",
             ],
-            "output_schema": {
-                "main_idea": "string",
-                "simplified_text": "string",
-                "reasoning_steps": ["string"],
-                "learning_steps": ["string"],
-                "glossary": [{"term": "string", "definition": "string"}],
-                "analogies": ["string"],
-                "quiz": [{"question": "string", "answer": "string"}],
-            },
+            "output_schema": _output_schema_text(),
             "original_text": original,
             "current_simplified_text": simplified,
         },
         ensure_ascii=False,
     )
 
+
+# ---------------------------------------------------------------------------
+# JSON helpers
+# ---------------------------------------------------------------------------
 
 def _extract_json(content: str) -> dict[str, Any]:
     s = content.strip()
@@ -260,10 +363,7 @@ def _normalize_str_list(value: Any, max_items: int = 10, max_len: int = 280) -> 
 
 def _normalize_result(data: dict[str, Any], raw: dict[str, Any]) -> LLMResult:
     main_idea = _clean_text(
-        data.get("main_idea")
-        or data.get("mainIdea")
-        or data.get("summary")
-        or ""
+        data.get("main_idea") or data.get("mainIdea") or data.get("summary") or ""
     ).strip()
     text = _clean_text(
         data.get("simplified_text")
@@ -329,15 +429,11 @@ def _normalize_result(data: dict[str, Any], raw: dict[str, Any]) -> LLMResult:
     ][:3]
 
     reasoning_steps = _normalize_str_list(
-        data.get("reasoning_steps")
-        or data.get("reasoning")
-        or data.get("thought_steps"),
+        data.get("reasoning_steps") or data.get("reasoning") or data.get("thought_steps"),
         max_items=8,
     )
     learning_steps = _normalize_str_list(
-        data.get("learning_steps")
-        or data.get("steps")
-        or data.get("lesson_steps"),
+        data.get("learning_steps") or data.get("steps") or data.get("lesson_steps"),
         max_items=10,
     )
 
@@ -351,6 +447,14 @@ def _normalize_result(data: dict[str, Any], raw: dict[str, Any]) -> LLMResult:
         quiz=quiz,
         raw=raw,
     )
+
+
+# ---------------------------------------------------------------------------
+# Provider adapters
+# ---------------------------------------------------------------------------
+
+def _is_yandex(base: str) -> bool:
+    return "llm.api.cloud.yandex.net" in base or str(settings.llm_model).startswith("gpt://")
 
 
 async def _ollama_chat(messages: list[dict[str, str]]) -> dict[str, Any]:
@@ -374,22 +478,21 @@ async def _ollama_chat(messages: list[dict[str, str]]) -> dict[str, Any]:
 
 async def _openai_compatible_chat(messages: list[dict[str, str]]) -> dict[str, Any]:
     base = settings.llm_base_url.rstrip("/")
-    # Yandex AI Studio OpenAI-compatible endpoint is under /v1.
-    # Many configs use Foundation Models base (/foundationModels/v1) — normalize it.
     if ("llm.api.cloud.yandex.net" in base) and ("/foundationModels/v1" in base):
         base = base.replace("/foundationModels/v1", "/v1")
 
-    # Support both forms: base="https://.../v1" or base="https://..."
     url = f"{base}/chat/completions" if base.endswith("/v1") else f"{base}/v1/chat/completions"
-    headers = {}
+    headers: dict[str, str] = {}
     if settings.llm_api_key:
-        # Yandex API keys use "Api-Key". IAM tokens use "Bearer".
-        if "llm.api.cloud.yandex.net" in base or str(settings.llm_model).startswith("gpt://"):
+        if _is_yandex(base):
             headers["Authorization"] = f"Api-Key {settings.llm_api_key}"
         else:
             headers["Authorization"] = f"Bearer {settings.llm_api_key}"
     if settings.openai_project:
-        headers["OpenAI-Project"] = settings.openai_project
+        if _is_yandex(base):
+            headers["x-folder-id"] = settings.openai_project
+        else:
+            headers["OpenAI-Project"] = settings.openai_project
     payload = {
         "model": settings.llm_model,
         "messages": messages,
@@ -426,10 +529,7 @@ def _gemini_schema() -> dict[str, Any]:
                     "required": ["term", "definition"],
                 },
             },
-            "analogies": {
-                "type": "ARRAY",
-                "items": {"type": "STRING"},
-            },
+            "analogies": {"type": "ARRAY", "items": {"type": "STRING"}},
             "quiz": {
                 "type": "ARRAY",
                 "items": {
@@ -443,13 +543,8 @@ def _gemini_schema() -> dict[str, Any]:
             },
         },
         "required": [
-            "main_idea",
-            "simplified_text",
-            "reasoning_steps",
-            "learning_steps",
-            "glossary",
-            "analogies",
-            "quiz",
+            "main_idea", "simplified_text", "reasoning_steps",
+            "learning_steps", "glossary", "analogies", "quiz",
         ],
     }
 
@@ -522,19 +617,21 @@ def _content_from_response(raw: dict[str, Any]) -> str:
     raise LLMError("llm_response_has_no_content")
 
 
-async def _chat(messages: list[dict[str, str]]) -> LLMResult:
+async def _call_provider(messages: list[dict[str, str]]) -> dict[str, Any]:
     if settings.llm_provider == "ollama":
-        raw = await _ollama_chat(messages)
-    elif settings.llm_provider == "openai_compatible":
-        raw = await _openai_compatible_chat(messages)
-    elif settings.llm_provider == "gemini":
+        return await _ollama_chat(messages)
+    if settings.llm_provider == "openai_compatible":
+        return await _openai_compatible_chat(messages)
+    if settings.llm_provider == "gemini":
         try:
-            raw = await _gemini_chat(messages)
+            return await _gemini_chat(messages)
         except httpx.TimeoutException as e:
             raise LLMError("llm_provider_timeout") from e
-    else:
-        raise LLMError(f"unsupported_llm_provider:{settings.llm_provider}")
+    raise LLMError(f"unsupported_llm_provider:{settings.llm_provider}")
 
+
+async def _chat(messages: list[dict[str, str]]) -> LLMResult:
+    raw = await _call_provider(messages)
     _raise_for_incomplete_response(raw)
     content = _content_from_response(raw).strip()
     try:
@@ -547,64 +644,110 @@ async def _chat(messages: list[dict[str, str]]) -> LLMResult:
         partial_text = _extract_partial_simplified_text(content)
         if partial_text:
             return LLMResult(
-                main_idea="",
-                simplified_text=partial_text,
-                reasoning_steps=[],
-                learning_steps=[],
-                glossary=[],
-                analogies=[],
-                quiz=[],
-                raw=raw,
+                main_idea="", simplified_text=partial_text,
+                reasoning_steps=[], learning_steps=[],
+                glossary=[], analogies=[], quiz=[], raw=raw,
             )
         if str(e).startswith("llm_returned_malformed_json"):
             cleaned = re.sub(r"^\s*\{?\s*\"?simplified_text\"?\s*:\s*\"?", "", content, flags=re.DOTALL)
             cleaned = re.sub(r"\"?\s*,?\s*\"?glossary\"?.*$", "", cleaned, flags=re.DOTALL).strip()
             if cleaned:
                 return LLMResult(
-                    main_idea="",
-                    simplified_text=cleaned,
-                    reasoning_steps=[],
-                    learning_steps=[],
-                    glossary=[],
-                    analogies=[],
-                    quiz=[],
-                    raw=raw,
+                    main_idea="", simplified_text=cleaned,
+                    reasoning_steps=[], learning_steps=[],
+                    glossary=[], analogies=[], quiz=[], raw=raw,
                 )
         return LLMResult(
-            main_idea="",
-            simplified_text=content,
-            reasoning_steps=[],
-            learning_steps=[],
-            glossary=[],
-            analogies=[],
-            quiz=[],
-            raw=raw,
+            main_idea="", simplified_text=content,
+            reasoning_steps=[], learning_steps=[],
+            glossary=[], analogies=[], quiz=[], raw=raw,
         )
     return _normalize_result(data, raw)
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+async def summarize_article(text: str, query: str) -> SummarizationResult:
+    """Step 1: Extract conceptual structure and all key facts from the article."""
+    truncated = text[: settings.llm_max_input_chars].strip()
+    messages = [
+        {"role": "system", "content": _summarize_system_prompt()},
+        {"role": "user", "content": _summarize_user_prompt(truncated, query)},
+    ]
+    try:
+        raw = await _call_provider(messages)
+        content = _content_from_response(raw).strip()
+        data = _extract_json(content)
+
+        condensed = _clean_text(data.get("condensed_text") or "").strip()
+        core_concept = _clean_text(data.get("core_concept") or "").strip()
+
+        raw_terms = data.get("key_terms") or []
+        key_terms = [
+            {"term": _clean_text(x.get("term", "")), "definition": _clean_text(x.get("definition", ""))}
+            for x in raw_terms
+            if isinstance(x, dict)
+        ][:20]
+
+        key_dates = [str(x).strip() for x in (data.get("key_dates") or []) if str(x).strip()][:12]
+        key_names = [str(x).strip() for x in (data.get("key_names") or []) if str(x).strip()][:16]
+        key_numbers = [str(x).strip() for x in (data.get("key_numbers") or []) if str(x).strip()][:16]
+
+        if not condensed or len(condensed) < 50:
+            condensed = truncated
+
+        # Attach extra fields to raw so pipeline can use them for prompt enrichment
+        raw["core_mechanism"] = _clean_text(data.get("core_mechanism") or "").strip()
+        raw["main_misconception"] = _clean_text(data.get("main_misconception") or "").strip()
+        raw["hardest_to_explain"] = _clean_text(data.get("hardest_to_explain") or "").strip()
+
+        logger.info(
+            "summarize_article: condensed %d→%d chars, terms=%d, dates=%d, names=%d",
+            len(truncated), len(condensed), len(key_terms), len(key_dates), len(key_names),
+        )
+        return SummarizationResult(
+            condensed_text=condensed,
+            core_concept=core_concept,
+            key_terms=key_terms,
+            key_dates=key_dates,
+            key_names=key_names,
+            key_numbers=key_numbers,
+            raw=raw,
+        )
+    except Exception as exc:
+        logger.warning("summarize_article failed (%s), falling back to raw text", exc)
+        return SummarizationResult(
+            condensed_text=truncated,
+            core_concept="",
+            key_terms=[],
+            key_dates=[],
+            key_names=[],
+            key_numbers=[],
+            raw={},
+        )
 
 
 async def simplify_with_llm(
     original_text: str,
     age: int,
     mode: str,
-    interest_topics: list[str] | None = None,
-    child_notes: str = "",
     key_facts: dict | None = None,
+    summary: SummarizationResult | None = None,
 ) -> LLMResult:
-    text = original_text[: settings.llm_max_input_chars].strip()
+    """Step 2: Turn the structured summary into a clear, deep explanation for children."""
+    input_text = original_text
+    if summary and summary.condensed_text and len(summary.condensed_text) >= 50:
+        input_text = summary.condensed_text
+
+    text = input_text[: settings.llm_max_input_chars].strip()
     return await _chat(
         [
             {"role": "system", "content": _system_prompt()},
             {
                 "role": "user",
-                "content": _simplify_user_prompt(
-                    text,
-                    age,
-                    mode,
-                    interest_topics or [],
-                    child_notes,
-                    key_facts,
-                ),
+                "content": _simplify_user_prompt(text, age, mode, key_facts, summary),
             },
         ]
     )
@@ -618,4 +761,3 @@ async def repair_with_llm(original_text: str, simplified_text: str, age: int, mi
             {"role": "user", "content": _repair_user_prompt(original, simplified_text, age, missing)},
         ]
     )
-

@@ -76,26 +76,38 @@ def init_db() -> None:
               model_json TEXT NOT NULL DEFAULT '{}',
               verifier_json TEXT NOT NULL DEFAULT '{}'
             );
+
+            CREATE TABLE IF NOT EXISTS ratings (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              created_at INTEGER NOT NULL,
+              history_key TEXT NOT NULL,
+              stars INTEGER NOT NULL,
+              comment TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_ratings_key ON ratings(history_key);
             """
         )
-        for table in ("simplification_history", "semantic_cache"):
-            cols = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-            if "mode" not in cols:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN mode TEXT NOT NULL DEFAULT 'balanced'")
-            if "main_idea" not in cols:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN main_idea TEXT NOT NULL DEFAULT ''")
-            if "quiz_json" not in cols:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN quiz_json TEXT NOT NULL DEFAULT '[]'")
-            if "quality_json" not in cols:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN quality_json TEXT NOT NULL DEFAULT '{{}}'")
-            if "model_json" not in cols:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN model_json TEXT NOT NULL DEFAULT '{{}}'")
-            if "verifier_json" not in cols:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN verifier_json TEXT NOT NULL DEFAULT '{{}}'")
-            if "extras_json" not in cols:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN extras_json TEXT NOT NULL DEFAULT '{{}}'")
+        _migrate(conn)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table in ("simplification_history", "semantic_cache"):
+        cols = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        for col, ddl in [
+            ("mode", "TEXT NOT NULL DEFAULT 'balanced'"),
+            ("main_idea", "TEXT NOT NULL DEFAULT ''"),
+            ("quiz_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("quality_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("model_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("verifier_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("extras_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("summarization_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("timings_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("metrics_enabled", "INTEGER NOT NULL DEFAULT 1"),
+        ]:
+            if col not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
 
 
 def now_ms() -> int:
     return int(time.time() * 1000)
-

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Ruwiki Explain — просто о сложном</title>
-    <meta name="description" content="Понятные объяснения для детей 6–14 лет: возрастная адаптация, интересы ребёнка, метрики качества и мини‑викторина.">
+    <meta name="description" content="Понятные объяснения для детей 6–14 лет: как это устроено и работает — с аналогиями, глоссарием и интерактивной викториной.">
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;700;800;900&display=swap" rel="stylesheet" />
@@ -13,6 +13,7 @@
   </head>
   <body>
     <div class="bgDecor" aria-hidden="true"></div>
+
     <main class="page">
       <header class="topbar fade-in">
         <div class="brand">
@@ -26,18 +27,18 @@
         <div class="heroText">
           <p class="eyebrow">Учимся с улыбкой</p>
           <h1>Сложные темы — простыми словами</h1>
-          <p class="lead">Выбери интересы, расскажи немного о себе — и получи главную мысль, понятный текст по шагам, термины и игру на память.</p>
+          <p class="lead">Введи любую тему — объясним, как это устроено и работает: с аналогиями, глоссарием и интерактивной викториной.</p>
           <div class="badges">
             <span>6–14 лет</span>
-            <span>Пошагово</span>
-            <span>Персонализация</span>
-            <span>ROUGE / BLEURT‑proxy</span>
+            <span>Аналогии</span>
+            <span>Глоссарий</span>
+            <span>Викторина</span>
           </div>
         </div>
         <div class="heroPanel" aria-hidden="true">
           <div class="bubble large float-soft">Сначала думаем — потом объясняем</div>
-          <div class="bubble float-soft delay-1">Твои интересы попадают в примеры</div>
-          <div class="bubble accent float-soft delay-2">В конце — маленькая викторина</div>
+          <div class="bubble float-soft delay-1">Лучшая аналогия для каждой темы</div>
+          <div class="bubble accent float-soft delay-2">В конце — интерактивная викторина!</div>
         </div>
       </section>
 
@@ -56,15 +57,8 @@
 
         <label>
           Тема
-          <textarea id="query" maxlength="100" rows="3" placeholder="Например: электричество, иммунитет, динозавры"></textarea>
-          <div class="hint">Можно как в википедии — коротко назвать тему</div>
+          <textarea id="query" maxlength="100" rows="2" placeholder="Например: электричество, иммунитет, динозавры"></textarea>
         </label>
-
-        <div class="kidSection">
-          <h3 class="kidHeading"><span class="kidIcon" aria-hidden="true">⭐</span> Что тебе интересно?</h3>
-          <p class="kidHint">Нажми несколько картинок-тем — мы используем это для примеров и аналогий.</p>
-          <div id="interestChips" class="interestChips" aria-label="Интересы"></div>
-        </div>
 
         <div class="formGrid pair">
           <label>
@@ -91,47 +85,52 @@
           </label>
         </div>
 
-        <label>
-          Коротко о себе
-          <textarea id="childNotes" maxlength="280" rows="2" placeholder="Например: люблю кошек, играю в футбол, боюсь темноты — без медицинских диагнозов"></textarea>
-          <div class="hint">Необязательно. Намёки на интересы и характер — чтобы текст звучал «про тебя».</div>
-        </label>
-
         <div class="formGrid">
           <label class="backendField full">
             API сервера
             <input id="backendUrl" type="url" value="http://127.0.0.1:8000" />
-            <div class="hint">Полный адрес с http:// (например http://127.0.0.1:8000). Без схемы запрос уйдёт не на тот порт. Откройте фронт через http://, а не file://</div>
+            <div class="hint">Полный адрес с http://</div>
+          </label>
+        </div>
+
+        <!-- Fast mode toggle -->
+        <div class="fastModeRow">
+          <label class="toggleLabel" for="fastModeToggle">
+            <input id="fastModeToggle" type="checkbox" class="toggleInput" />
+            <span class="toggleTrack"><span class="toggleThumb"></span></span>
+            <span class="toggleText">⚡ Быстрый режим <span class="toggleSub">(без метрик — чистая скорость)</span></span>
           </label>
         </div>
 
         <div class="actions">
-          <button id="submitBtn" class="primaryBtn" type="button">Упростить текст</button>
-          <button id="micBtn" class="ghostBtn" type="button">Говорить</button>
+          <button id="submitBtn" class="primaryBtn" type="button">Объяснить!</button>
+          <button id="micBtn" class="ghostBtn" type="button">🎤 Говорить</button>
           <button id="clearBtn" class="ghostBtn" type="button">Очистить кэш</button>
         </div>
 
         <p id="status" class="status"></p>
         <div id="progress" class="progress hidden">
           <span>Ищу статью</span>
-          <span>Думаю по шагам</span>
-          <span>Пишу понятный текст</span>
-          <span>Проверяю факты</span>
-        </div>
-
-        <div class="infoBox howItWorks">
-          <h3>Как это устроено?</h3>
-          <ol class="steps">
-            <li>Сначала проверяем быстрый кэш по похожим запросам и возрастной группе</li>
-            <li>Если кэша нет — находим статью в Рувики и берём важный фрагмент</li>
-            <li>Модель выбирает стратегию: фактологический или причинно‑следственный ответ</li>
-            <li>Считаем ROUGE, BLEURT‑proxy и достоверность — затем сохраняем лучший ответ</li>
-          </ol>
+          <span>Анализирую</span>
+          <span>Упрощаю</span>
+          <span>Проверяю</span>
         </div>
       </section>
 
+      <!-- Bubble-pop mini game (shown while loading) -->
+      <div id="miniGame" class="miniGame hidden" aria-hidden="true">
+        <canvas id="gameCanvas"></canvas>
+        <div class="miniGameHud">
+          <span class="miniGameScore">💥 <span id="gameScoreVal">0</span></span>
+          <span class="miniGameHint">Лопай пузыри пока думаем!</span>
+        </div>
+      </div>
+
+      <!-- Result card -->
       <section id="result" class="card result hidden fade-in-up">
-        <div class="accuracyStrip" id="accuracyStrip">
+
+        <!-- Metrics strip (hidden in fast mode) -->
+        <div id="metricsStrip" class="metricsStrip">
           <div class="accuracyRing" aria-hidden="true">
             <svg viewBox="0 0 36 36">
               <path class="accuracyBg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
@@ -139,35 +138,15 @@
             </svg>
             <span id="accuracyPercent" class="accuracyPercent">—</span>
           </div>
-          <div class="accuracyCopy">
-            <p class="accuracyTitle">Достоверность ответа</p>
-            <p id="accuracyLabel" class="accuracyMetric">Комбинированная метрика</p>
-            <p id="accuracyDetail" class="accuracyDetail"></p>
-            <div id="accuracyPills" class="accuracyPills" aria-label="Разбор метрики"></div>
-            <p id="accuracyHint" class="accuracyHint"></p>
-          </div>
-        </div>
-
-        <div class="qualityPanel">
-          <div class="qualityCard">
-            <span class="qualityLabel">ROUGE‑1</span>
-            <strong id="rouge1Score">—</strong>
-            <small>ключевые слова</small>
-          </div>
-          <div class="qualityCard">
-            <span class="qualityLabel">ROUGE‑L</span>
-            <strong id="rougeLScore">—</strong>
-            <small>порядок фактов</small>
-          </div>
-          <div class="qualityCard">
-            <span class="qualityLabel">BLEURT‑proxy</span>
-            <strong id="bleurtScore">—</strong>
-            <small>естественность</small>
-          </div>
-          <div class="qualityCard">
-            <span class="qualityLabel">Скорость</span>
-            <strong id="latencyScore">—</strong>
-            <small>ответ / кэш</small>
+          <div class="metricsCopy">
+            <p class="metricsTitle" id="accuracyLabel">Качество объяснения</p>
+            <p id="accuracyDetail" class="metricsDetail"></p>
+            <div id="metricsCards" class="metricsCards">
+              <div class="mCard"><span class="mLabel">Простота</span><strong id="mSimplicity">—</strong></div>
+              <div class="mCard"><span class="mLabel">Примеры</span><strong id="mExamples">—</strong></div>
+              <div class="mCard"><span class="mLabel">Чёткость</span><strong id="mClarity">—</strong></div>
+              <div class="mCard"><span class="mLabel">Скорость</span><strong id="mLatency">—</strong></div>
+            </div>
           </div>
         </div>
 
@@ -179,50 +158,62 @@
           </div>
           <div class="resultActions">
             <button id="copyBtn" class="ghostBtn" type="button">Скопировать</button>
-            <button id="speakBtn" class="ghostBtn" type="button">Озвучить</button>
+            <button id="speakBtn" class="ghostBtn" type="button">🔊 Озвучить</button>
           </div>
         </div>
 
-        <div id="learningBlock" class="learningBlock hidden">
-          <h3 class="kidBanner"><span>📌</span> Узнаём по шагам</h3>
-          <ol id="learningSteps" class="learningSteps"></ol>
+        <!-- Main idea -->
+        <div class="mainIdea">
+          <span>Главная мысль</span>
+          <p id="mainIdea"></p>
         </div>
 
+        <!-- Explanation -->
+        <div class="explanationBox">
+          <h3 class="sectionHeading">💡 Простое объяснение</h3>
+          <div id="simplifiedText" class="text"></div>
+        </div>
+
+        <!-- Analogies -->
+        <div id="analogiesBox" class="analogiesBox hidden">
+          <h3 class="sectionHeading">🎯 Аналогии</h3>
+          <ul id="analogies" class="analogiesList"></ul>
+        </div>
+
+        <!-- Glossary -->
+        <div id="glossaryBox" class="glossaryBox hidden">
+          <h3 class="sectionHeading">📖 Ключевые термины</h3>
+          <ul id="glossary" class="glossaryList"></ul>
+        </div>
+
+        <!-- Interactive quiz -->
+        <div class="quizSection">
+          <h3 class="sectionHeading">🎮 Мини-викторина</h3>
+          <div id="quizContainer" class="quizContainer">
+            <p class="emptyText">Вопросы появятся после следующего ответа.</p>
+          </div>
+        </div>
+
+        <!-- User rating -->
+        <div id="ratingBox" class="ratingBox hidden">
+          <p class="ratingTitle">Насколько понятно объяснение?</p>
+          <div class="starRow" id="starRow">
+            <button class="starBtn" data-stars="1">★</button>
+            <button class="starBtn" data-stars="2">★</button>
+            <button class="starBtn" data-stars="3">★</button>
+            <button class="starBtn" data-stars="4">★</button>
+            <button class="starBtn" data-stars="5">★</button>
+          </div>
+          <p id="ratingMsg" class="ratingMsg hidden">Спасибо за оценку! 🎉</p>
+        </div>
+
+        <!-- Reasoning (collapsed) -->
         <details id="reasoningDetails" class="reasoningDetails hidden">
-          <summary>Как модель думала по порядку</summary>
+          <summary>Как модель думала по шагам</summary>
           <ol id="reasoningSteps" class="reasoningSteps"></ol>
         </details>
 
-        <div class="resultLayout">
-          <aside class="sourceBox">
-            <h3>Фрагмент оригинала</h3>
-            <div id="originalText" class="sourceText"></div>
-          </aside>
-          <section class="answerBox">
-            <div class="mainIdea">
-              <span>Главная мысль</span>
-              <p id="mainIdea"></p>
-            </div>
-            <h3>Простое объяснение</h3>
-            <div id="simplifiedText" class="text"></div>
-          </section>
-        </div>
-
-        <div class="grid">
-          <div class="infoBox">
-            <h3>Термины</h3>
-            <ul id="glossary"></ul>
-          </div>
-          <div class="infoBox">
-            <h3>Примеры</h3>
-            <ul id="analogies"></ul>
-          </div>
-          <div class="infoBox">
-            <h3>Мини-викторина</h3>
-            <div id="quiz" class="quiz"></div>
-          </div>
-        </div>
-
+        <!-- Technical details (collapsed) -->
         <details>
           <summary>Технические детали</summary>
           <pre id="meta"></pre>
@@ -230,8 +221,7 @@
       </section>
 
       <footer class="footer">
-        <p>© 2026 Ruwiki Explain.</p>
-        <p>Источник статей: Рувики (CC BY-SA 3.0).</p>
+        <p>© 2026 Ruwiki Explain. Источник статей: Рувики (CC BY-SA 3.0).</p>
       </footer>
     </main>
 

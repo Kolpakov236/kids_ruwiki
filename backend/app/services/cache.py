@@ -16,8 +16,6 @@ def cache_key(
     mode: str,
     source_title: str,
     model_variant: str,
-    interest_topics: list[str] | None = None,
-    child_notes: str = "",
     key_facts: dict | None = None,
 ) -> str:
     h = hashlib.sha256()
@@ -30,11 +28,6 @@ def cache_key(
     h.update(source_title.strip().lower().encode("utf-8"))
     h.update(b"\0")
     h.update(model_variant.strip().lower().encode("utf-8"))
-    topics = sorted({t.strip().lower() for t in (interest_topics or []) if t and t.strip()})
-    h.update(b"\0")
-    h.update("|".join(topics).encode("utf-8"))
-    h.update(b"\0")
-    h.update(child_notes.strip().lower().encode("utf-8"))
     facts = key_facts or {}
     required_terms = facts.get("required_terms") or []
     formulas = facts.get("formulas") or []
@@ -64,12 +57,18 @@ def get_sqlite_cached(key: str):
         row = conn.execute("SELECT * FROM semantic_cache WHERE key = ?", (key,)).fetchone()
     if not row:
         return None
-    extras = {}
-    try:
-        raw_ex = row["extras_json"] if "extras_json" in row.keys() else "{}"
-        extras = json.loads(raw_ex) if raw_ex else {}
-    except Exception:
-        extras = {}
+    keys = row.keys()
+
+    def _json(col: str, default):
+        if col in keys:
+            raw = row[col]
+            try:
+                return json.loads(raw) if raw else default
+            except Exception:
+                return default
+        return default
+
+    extras = _json("extras_json", {})
     return {
         "query": row["query"],
         "age": row["age"],
@@ -79,27 +78,26 @@ def get_sqlite_cached(key: str):
         "original_text": row["original_text"],
         "main_idea": row["main_idea"],
         "simplified_text": row["simplified_text"],
-        "glossary": json.loads(row["glossary_json"]),
-        "analogies": json.loads(row["analogies_json"]),
-        "quiz": json.loads(row["quiz_json"]),
-        "quality": json.loads(row["quality_json"]),
-        "model": json.loads(row["model_json"]),
-        "verifier": json.loads(row["verifier_json"]),
-        "interest_topics": extras.get("interest_topics") or [],
-        "child_notes": extras.get("child_notes") or "",
+        "glossary": _json("glossary_json", []),
+        "analogies": _json("analogies_json", []),
+        "quiz": _json("quiz_json", []),
+        "quality": _json("quality_json", {}),
+        "model": _json("model_json", {}),
+        "verifier": _json("verifier_json", {}),
         "reasoning_steps": extras.get("reasoning_steps") or [],
         "learning_steps": extras.get("learning_steps") or [],
         "accuracy": extras.get("accuracy") or {},
         "evaluation": extras.get("evaluation") or {},
         "age_group": extras.get("age_group") or "",
         "cache_similarity": extras.get("cache_similarity"),
+        "summarization": _json("summarization_json", {}),
+        "metrics_enabled": bool(row["metrics_enabled"]) if "metrics_enabled" in keys else True,
+        "history_key": key,
     }
 
 
 def _extras_payload(payload: dict) -> dict:
     return {
-        "interest_topics": payload.get("interest_topics") or [],
-        "child_notes": payload.get("child_notes") or "",
         "reasoning_steps": payload.get("reasoning_steps") or [],
         "learning_steps": payload.get("learning_steps") or [],
         "accuracy": payload.get("accuracy") or {},
@@ -116,9 +114,12 @@ def put_sqlite_cached(key: str, payload: dict) -> None:
         conn.execute(
             """
             INSERT OR REPLACE INTO semantic_cache
-              (key, created_at, query, age, mode, source_title, source_url, original_text, main_idea, simplified_text, glossary_json, analogies_json, quiz_json, quality_json, model_json, verifier_json, extras_json)
+              (key, created_at, query, age, mode, source_title, source_url, original_text,
+               main_idea, simplified_text, glossary_json, analogies_json, quiz_json,
+               quality_json, model_json, verifier_json, extras_json,
+               summarization_json, timings_json, metrics_enabled)
             VALUES
-              (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 key,
@@ -138,19 +139,32 @@ def put_sqlite_cached(key: str, payload: dict) -> None:
                 json.dumps(payload.get("model", {}), ensure_ascii=False),
                 json.dumps(payload.get("verifier", {}), ensure_ascii=False),
                 json.dumps(_extras_payload(payload), ensure_ascii=False),
+                json.dumps(payload.get("summarization", {}), ensure_ascii=False),
+                json.dumps(payload.get("timings", {}), ensure_ascii=False),
+                1 if payload.get("metrics_enabled", True) else 0,
             ),
         )
 
 
-def log_history(payload: dict, cached: bool, latency_ms: int) -> None:
+def log_history(
+    payload: dict,
+    cached: bool,
+    latency_ms: int,
+    timings: dict | None = None,
+) -> str:
+    """Insert a history row and return its rowid (used as history_key for ratings)."""
     init_db()
     with tx() as conn:
-        conn.execute(
+        cur = conn.execute(
             """
             INSERT INTO simplification_history
-              (created_at, query, age, mode, source_title, source_url, original_text, main_idea, simplified_text, glossary_json, analogies_json, quiz_json, quality_json, model_json, verifier_json, extras_json, cached, latency_ms)
+              (created_at, query, age, mode, source_title, source_url, original_text,
+               main_idea, simplified_text, glossary_json, analogies_json, quiz_json,
+               quality_json, model_json, verifier_json, extras_json,
+               summarization_json, timings_json, metrics_enabled,
+               cached, latency_ms)
             VALUES
-              (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 now_ms(),
@@ -169,9 +183,22 @@ def log_history(payload: dict, cached: bool, latency_ms: int) -> None:
                 json.dumps(payload.get("model", {}), ensure_ascii=False),
                 json.dumps(payload.get("verifier", {}), ensure_ascii=False),
                 json.dumps(_extras_payload(payload), ensure_ascii=False),
+                json.dumps(payload.get("summarization", {}), ensure_ascii=False),
+                json.dumps(timings or {}, ensure_ascii=False),
+                1 if payload.get("metrics_enabled", True) else 0,
                 1 if cached else 0,
                 latency_ms,
             ),
+        )
+        return str(cur.lastrowid)
+
+
+def save_rating(history_key: str, stars: int, comment: str = "") -> None:
+    init_db()
+    with tx() as conn:
+        conn.execute(
+            "INSERT INTO ratings (created_at, history_key, stars, comment) VALUES (?, ?, ?, ?)",
+            (now_ms(), history_key, stars, comment[:500]),
         )
 
 
@@ -241,4 +268,3 @@ def upsert_answer_query(query: str, age_group: str, key: str, meta: dict | None 
     doc_id = hashlib.sha256(doc.encode("utf-8")).hexdigest()
     metadata = {"key": key, "age_group": age_group, **(meta or {})}
     col.upsert(ids=[doc_id], documents=[doc], metadatas=[metadata])
-

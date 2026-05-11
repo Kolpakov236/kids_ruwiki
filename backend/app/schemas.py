@@ -9,8 +9,7 @@ class SimplifyRequest(BaseModel):
     query: str = Field(min_length=1, max_length=100)
     age: int = Field(default=10, ge=6, le=14)
     mode: Literal["simple", "balanced", "detailed"] = "balanced"
-    interest_topics: list[str] = Field(default_factory=list, max_length=12)
-    child_notes: str = Field(default="", max_length=280)
+    enable_metrics: bool = Field(default=True)
 
 
 class SimplifyResponse(BaseModel):
@@ -18,8 +17,6 @@ class SimplifyResponse(BaseModel):
     age: int
     age_group: str
     mode: str
-    interest_topics: list[str]
-    child_notes: str
     source_title: str
     source_url: str
     original_text: str
@@ -36,7 +33,20 @@ class SimplifyResponse(BaseModel):
     model: dict[str, str]
     verifier: dict
     cached: bool
+    metrics_enabled: bool
     timings_ms: dict[str, int]
+    history_key: str = ""
+
+
+class RatingRequest(BaseModel):
+    history_key: str = Field(min_length=1, max_length=256)
+    stars: int = Field(ge=1, le=5)
+    comment: str = Field(default="", max_length=500)
+
+
+class RatingResponse(BaseModel):
+    ok: bool
+    message: str
 
 
 class HealthResponse(BaseModel):
@@ -45,4 +55,3 @@ class HealthResponse(BaseModel):
     model: str
     api_key_configured: bool
     cache_enabled: bool
-

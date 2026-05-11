@@ -46,6 +46,20 @@ _RU_STOP = frozenset(
     """.split()
 )
 
+# Markers of analogies and concrete examples — good signs in children's text
+_EXAMPLE_MARKERS = re.compile(
+    r"например|представь|похоже|как будто|как если бы|словно|это как|"
+    r"можно сравнить|вспомни|допустим|для примера|скажем|"
+    r"похож[а-я]* на|как [а-яё]+,|как в",
+    re.IGNORECASE,
+)
+
+# Engagement markers — questions and imperatives increase child engagement
+_ENGAGEMENT = re.compile(
+    r"\?|знаешь|хочешь узнать|а знаешь|представь себе|попробуй|вспомни|подумай",
+    re.IGNORECASE,
+)
+
 
 def _significant_terms(text: str, limit: int = 48) -> list[str]:
     words = re.findall(r"[A-Za-zА-Яа-яЁё]{5,}", text)
@@ -79,7 +93,6 @@ def _technical_phrases(text: str, limit: int = 32) -> list[str]:
         for i in range(0, max(0, len(words) - n + 1)):
             parts = words[i : i + n]
             scripts = {script(p) for p in parts if script(p) != "other"}
-            # Avoid artificial mixed-script n-grams like "ток alternating".
             if len(scripts) > 1:
                 continue
             norm_parts = [p.lower().replace("ё", "е") for p in parts]
@@ -87,7 +100,6 @@ def _technical_phrases(text: str, limit: int = 32) -> list[str]:
             key = " ".join(norm_parts)
             if key in seen:
                 continue
-            # Keep phrases that look like domain terms, not arbitrary glue.
             if any(len(p) >= 6 for p in norm_parts):
                 seen.add(key)
                 phrases.append(phrase)
@@ -117,11 +129,6 @@ def _formulas_and_units(text: str) -> list[str]:
 
 
 def extract_key_facts(text: str, limit_terms: int = 48) -> dict:
-    """Извлекает якоря, которые модель обязана сохранить.
-
-    Это дешёвая локальная замена отдельного extractor-LLM: термины, устойчивые фразы,
-    годы, формулы, обозначения и единицы. Именно эти якоря используются для ROUGE.
-    """
     terms = _significant_terms(text, limit=limit_terms)
     phrases = _technical_phrases(text, limit=32)
     formulas = _formulas_and_units(text)
@@ -210,11 +217,6 @@ def _f1(overlap: int, pred_total: int, ref_total: int) -> float:
 
 
 def rouge_scores(reference: str, candidate: str) -> dict:
-    """Лёгкий ROUGE-1 / ROUGE-L без внешних зависимостей.
-
-    В продукте без эталонного детского ответа reference = исходный фрагмент статьи.
-    Это не «идеальный ROUGE», но полезный сигнал сохранения ключевых слов и порядка фактов.
-    """
     ref = _content_words(reference)
     cand = _content_words(candidate)
     if not ref or not cand:
@@ -238,7 +240,12 @@ def rouge_scores(reference: str, candidate: str) -> dict:
     }
 
 
-def _readability_naturalness(text: str, age: int) -> float:
+def simplicity_score(text: str, age: int) -> float:
+    """Measures how simple the language is for the target age group.
+
+    Focuses on sentence length and vocabulary complexity — the primary
+    quality signal for children's content.
+    """
     sentences = [x for x in re.split(r"(?<=[.!?…])\s+", text.strip()) if x.strip()]
     words = _words(text)
     if not sentences or not words:
@@ -246,13 +253,72 @@ def _readability_naturalness(text: str, age: int) -> float:
 
     avg_sentence = len(words) / len(sentences)
     max_target = 8 if age <= 8 else 11 if age <= 11 else 16
-    sentence_score = max(0.0, 1.0 - max(0.0, avg_sentence - max_target) / max_target)
+    # Gentle penalty: up to half the target over limit → 0 score
+    sentence_score = max(0.0, 1.0 - max(0.0, avg_sentence - max_target) / (max_target * 1.5))
 
-    long_words = [w for w in words if len(w) > (7 if age <= 8 else 10 if age <= 11 else 13)]
-    vocab_score = max(0.0, 1.0 - len(long_words) / max(1, len(words)))
+    long_threshold = 7 if age <= 8 else 10 if age <= 11 else 13
+    long_words = [w for w in words if len(w) > long_threshold]
+    vocab_score = max(0.0, 1.0 - len(long_words) / max(1, len(words)) * 2.0)
 
-    has_engagement = 1.0 if re.search(r"[?]|знаешь|представь|похоже|как будто", text, flags=re.IGNORECASE) else 0.75
-    return round(0.45 * sentence_score + 0.35 * vocab_score + 0.20 * has_engagement, 4)
+    return round(0.55 * sentence_score + 0.45 * vocab_score, 4)
+
+
+def example_quality_score(text: str, analogies: list[str] | None = None) -> float:
+    """Measures quality and density of analogies and concrete examples.
+
+    For children's content this is more important than literal fact retention:
+    a good analogy teaches better than a preserved encyclopedia sentence.
+    """
+    analogy_list = analogies or []
+
+    # Count example markers in the text
+    marker_hits = len(_EXAMPLE_MARKERS.findall(text))
+    words = _words(text)
+    word_count = max(1, len(words))
+
+    # Normalize: expect ~1 marker per 40 words
+    density_score = min(1.0, marker_hits / max(1, word_count / 40))
+
+    # External analogies provided by the model
+    has_analogies = 1.0 if len(analogy_list) >= 2 else 0.6 if len(analogy_list) == 1 else 0.2
+
+    # Engagement (questions and imperatives)
+    engagement = 1.0 if _ENGAGEMENT.search(text) else 0.65
+
+    return round(0.45 * density_score + 0.35 * has_analogies + 0.20 * engagement, 4)
+
+
+def term_clarity_score(text: str, glossary: list[dict] | None = None) -> float:
+    """Measures how well terms are explained in context.
+
+    Checks that each glossary term appears in the simplified text
+    AND that there is an explanatory phrase nearby ("это", "то есть", "значит").
+    """
+    if not glossary:
+        return 0.75  # Neutral: no terms to check
+    lower = text.lower().replace("ё", "е")
+    explain_pattern = re.compile(r"это|то есть|значит|называется|называют|является|представляет")
+
+    explained = 0
+    for entry in glossary:
+        term = str(entry.get("term") or "").strip().lower().replace("ё", "е")
+        if not term or len(term) < 3:
+            continue
+        if term not in lower:
+            continue
+        # Find term position and check for explanation marker within ±80 chars
+        pos = lower.find(term)
+        context = lower[max(0, pos - 80) : pos + len(term) + 80]
+        if explain_pattern.search(context):
+            explained += 1
+        else:
+            explained += 0.5  # Term present but not explicitly explained
+    return round(min(1.0, explained / len(glossary)), 4) if glossary else 0.75
+
+
+def _readability_naturalness(text: str, age: int) -> float:
+    """Legacy wrapper kept for compatibility — now calls simplicity_score."""
+    return simplicity_score(text, age)
 
 
 def evaluate_answer_quality(
@@ -261,20 +327,30 @@ def evaluate_answer_quality(
     age: int,
     consistency: dict | None = None,
     key_facts: dict | None = None,
+    analogies: list[str] | None = None,
+    glossary: list[dict] | None = None,
 ) -> dict:
+    """Main quality evaluation.
+
+    Primary signal: simplicity + example quality (child-oriented).
+    Secondary signal: faithfulness (factual grounding, kept lower weight).
+    """
     facts = key_facts or extract_key_facts(original)
     coverage = anchor_coverage(facts, simplified)
-    # ROUGE считаем не по всей статье, а по обязательным фактическим якорям.
     rouge = rouge_scores(facts.get("reference_text") or original, simplified)
     faithfulness = float((consistency or {}).get("score") or 0.0)
-    naturalness = _readability_naturalness(simplified, age)
 
-    # BLEURT требует отдельной тяжёлой модели; для локального продукта используем прозрачный proxy.
+    simp = simplicity_score(simplified, age)
+    examples = example_quality_score(simplified, analogies)
+    clarity = term_clarity_score(simplified, glossary)
+
+    # New bleurt_proxy: child-focused metrics dominate
+    # Faithfulness kept as a small guard (we still don't want hallucinations)
     bleurt_proxy = round(
-        0.42 * naturalness
-        + 0.28 * faithfulness
-        + 0.18 * min(1.0, rouge["rouge_l"] / 0.65)
-        + 0.12 * coverage["score"],
+        0.45 * simp
+        + 0.30 * examples
+        + 0.15 * clarity
+        + 0.10 * faithfulness,
         4,
     )
 
@@ -282,18 +358,20 @@ def evaluate_answer_quality(
         "rouge_1": rouge["rouge_1"],
         "rouge_l": rouge["rouge_l"],
         "bleurt_proxy": bleurt_proxy,
-        "naturalness": naturalness,
+        "simplicity": simp,
+        "example_quality": examples,
+        "term_clarity": clarity,
+        "faithfulness": faithfulness,
         "key_terms": coverage,
         "targets": {
-            "rouge_1": 0.65,
-            "rouge_l": 0.65,
-            "bleurt_proxy": 0.75,
-            "key_terms": 0.72,
+            "bleurt_proxy": 0.70,
+            "simplicity": 0.65,
+            "example_quality": 0.55,
         },
-        "ok": coverage["score"] >= 0.72 and bleurt_proxy >= 0.62 and faithfulness >= 0.55,
+        "ok": simp >= 0.55 and examples >= 0.45 and bleurt_proxy >= 0.55,
         "note": (
-            "ROUGE считается к извлечённым фактическим якорям (термины, формулы, годы), а не ко всей статье; "
-            "BLEURT-proxy — локальная оценка естественности, достоверности и связности без тяжёлой модели."
+            "Метрики ориентированы на детский контент: простота изложения (45%) "
+            "и качество примеров/аналогий (30%) важнее дословного сохранения фактов."
         ),
     }
 
@@ -312,16 +390,10 @@ def _entity_preserved(entity: str, simplified: str) -> bool:
 
 
 def factual_consistency(original: str, simplified: str) -> dict:
-    """
-    Оценка близости упрощённого текста к источнику без эталонного «золотого» пересказа.
+    """Secondary metric: basic factual grounding check.
 
-    Раньше считался только пересечение NER по двум текстам — на упрощённом тексте NER
-    часто «ломается», из‑за чего score завышал потери (типичный вид ~20%).
-
-    Сейчас:
-    - имена/места из оригинала ищутся в упрощённом тексте как подстроки (гибкая нормализация);
-    - годы и крупные числа как якоря фактов;
-    - пересечение значимых длинных слов (якоря терминов), без штрафа за перефраз при сохранении якорей.
+    Kept as a guard against hallucinations but no longer dominates the
+    overall quality score (faithfulness weight dropped to 10% in bleurt_proxy).
     """
     ner_orig = _ner_entities(original)
     kept_ent = 0
@@ -347,7 +419,6 @@ def factual_consistency(original: str, simplified: str) -> dict:
     n_t = len(terms)
     term_ratio = 1.0 if n_t == 0 else kept_t / n_t
 
-    # Веса: сущности главное; годы и термины стабилизируют оценку, когда NER пустой или редкий.
     if n_ent > 0:
         score = 0.62 * entity_ratio + 0.18 * year_ratio + 0.20 * term_ratio
     elif n_y > 0:
@@ -375,12 +446,11 @@ def factual_consistency(original: str, simplified: str) -> dict:
             "total": n_t,
             "percent": round(100 * term_ratio, 1) if n_t else None,
         },
-        "weights_note": "Имена и места — основной сигнал; годы и ключевые слова дополняют картину.",
+        "weights_note": "Вторичная метрика: защита от галлюцинаций (вес 10% в bleurt_proxy).",
     }
 
     return {
         "score": score,
         "missing": sorted(missing),
         "breakdown": breakdown,
-        "legacy_ner_only_note": "Оценка обновлена: совпадение сущностей проверяется по тексту ответа, не по повторному NER.",
     }

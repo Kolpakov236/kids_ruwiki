@@ -3,13 +3,14 @@ from __future__ import annotations
 import httpx
 from fastapi import APIRouter, HTTPException
 
-from app.schemas import HealthResponse, SimplifyRequest, SimplifyResponse
+from app.schemas import HealthResponse, RatingRequest, RatingResponse, SimplifyRequest, SimplifyResponse
 from app.settings import settings
-from app.services.cache import clear_sqlite_cache
+from app.services.cache import clear_sqlite_cache, save_rating
 from app.services.llm import LLMError
 from app.services.pipeline import simplify_pipeline
 
 router = APIRouter()
+
 
 def _is_llm_request(e: Exception) -> bool:
     req = getattr(e, "request", None)
@@ -30,8 +31,7 @@ async def simplify(req: SimplifyRequest) -> SimplifyResponse:
             query=req.query,
             age=req.age,
             mode=req.mode,
-            interest_topics=req.interest_topics,
-            child_notes=req.child_notes,
+            enable_metrics=req.enable_metrics,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -53,6 +53,15 @@ async def simplify(req: SimplifyRequest) -> SimplifyResponse:
         raise HTTPException(status_code=504, detail=f"upstream_timeout:{url}") from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
+
+
+@router.post("/rate", response_model=RatingResponse)
+async def rate(req: RatingRequest) -> RatingResponse:
+    try:
+        save_rating(history_key=req.history_key, stars=req.stars, comment=req.comment)
+        return RatingResponse(ok=True, message="Спасибо за оценку!")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -83,10 +92,9 @@ def _public_llm_error(detail: str) -> str:
     if detail.startswith("gemini_returned_invalid_json"):
         return "Модель вернула поврежденный JSON. Повторите запрос или увеличьте LLM_NUM_PREDICT."
     if detail.startswith("quality_gate_failed"):
-        return "Ответ не прошел проверку качества: он выглядит неполным. Повторите запрос."
+        return "Ответ не прошёл проверку качества. Повторите запрос."
     if detail.startswith("ruwiki_fetch_failed"):
-        return f"Не удалось быстро получить статью Рувики: {detail}. Попробуйте точное название статьи или повторите запрос."
+        return f"Не удалось получить статью Рувики: {detail}. Попробуйте точное название статьи."
     if detail == "gemini_api_key_required":
-        return "Не найден API-ключ Gemini. Укажите LLM_API_KEY, GEMINI_API_KEY или GOOGLE_API_KEY в backend/.env."
+        return "Не найден API-ключ Gemini. Укажите LLM_API_KEY в backend/.env."
     return detail
-
