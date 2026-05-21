@@ -3,8 +3,9 @@
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-// file:// → local dev; любой http/https → тот же origin (gateway / prod)
-const BACKEND_URL = window.location.protocol === "file:" ? "http://127.0.0.1:8000" : "";
+const BACKEND_URL = window.location.protocol === "file:"
+  ? "http://127.0.0.1:8000"                                           // local dev
+  : "https://d5dg7k4qpk1aie7v9401.nkhmighe.apigw.yandexcloud.net";  // cloud
 const RUWIKI_BASE = "https://ruwiki.ru/wiki/";
 
 const LOADING_TIPS = [

@@ -62,8 +62,10 @@ def debug_fs():
     }
 
 
-# Serve frontend static files (must be last so API routes take priority)
-if FRONTEND_DIR.exists():
+# Serve frontend static files only in local dev (in Cloud Functions StaticFiles at "/"
+# intercepts all routes including API ones due to Starlette mount priority)
+_in_cloud_functions = pathlib.Path("/function/code").exists()
+if FRONTEND_DIR.exists() and not _in_cloud_functions:
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="static")
 
 
