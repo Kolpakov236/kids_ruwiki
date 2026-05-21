@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import pathlib
 
@@ -70,10 +69,11 @@ if FRONTEND_DIR.exists() and not _in_cloud_functions:
 
 
 def handler(event, context):
-    """Yandex Cloud Functions entry point — wraps FastAPI ASGI app."""
+    """Yandex Cloud Functions entry point — wraps FastAPI via httpx.ASGITransport."""
     import json as _json
+    import httpx
 
-    # Direct ping bypasses ASGI — shows raw event for debugging
+    # Direct ping — returns raw event without going through ASGI (for debugging)
     raw_path = event.get("path", "")
     if raw_path in ("/ping", "ping"):
         return {
@@ -95,41 +95,15 @@ def handler(event, context):
     is_b64 = event.get("isBase64Encoded", False)
 
     body_bytes = base64.b64decode(body_raw) if is_b64 else body_raw.encode()
-    query_string = "&".join(f"{k}={v}" for k, v in qs.items()).encode()
-    headers = [(k.lower().encode(), v.encode()) for k, v in raw_headers.items()]
 
-    scope = {
-        "type": "http",
-        "asgi": {"version": "3.0"},
-        "http_version": "1.1",
-        "method": method.upper(),
-        "path": path,
-        "raw_path": path.encode(),
-        "query_string": query_string,
-        "root_path": "",
-        "headers": headers,
-        "server": ("functions.yandexcloud.net", 443),
-        "scheme": "https",
-    }
+    transport = httpx.ASGITransport(app=app)
+    with httpx.Client(transport=transport, base_url="http://yc.local") as client:
+        qs_str = "&".join(f"{k}={v}" for k, v in qs.items())
+        url = path + ("?" + qs_str if qs_str else "")
+        req_headers = {k: v for k, v in raw_headers.items()}
+        response = client.request(method.upper(), url, headers=req_headers, content=body_bytes)
 
-    status_code = 200
-    resp_headers: dict = {}
-    body_chunks: list[bytes] = []
-
-    async def receive():
-        return {"type": "http.request", "body": body_bytes, "more_body": False}
-
-    async def send(message):
-        nonlocal status_code, resp_headers
-        if message["type"] == "http.response.start":
-            status_code = message["status"]
-            resp_headers = {k.decode(): v.decode() for k, v in message.get("headers", [])}
-        elif message["type"] == "http.response.body":
-            body_chunks.append(message.get("body", b""))
-
-    asyncio.run(app(scope, receive, send))
-
-    response_body = b"".join(body_chunks)
+    resp_headers = dict(response.headers)
     content_type = resp_headers.get("content-type", "")
     is_binary = content_type and not content_type.startswith(
         ("text/", "application/json", "application/xml", "application/javascript")
@@ -137,15 +111,15 @@ def handler(event, context):
 
     if is_binary:
         return {
-            "statusCode": status_code,
+            "statusCode": response.status_code,
             "headers": resp_headers,
-            "body": base64.b64encode(response_body).decode(),
+            "body": base64.b64encode(response.content).decode(),
             "isBase64Encoded": True,
         }
 
     return {
-        "statusCode": status_code,
+        "statusCode": response.status_code,
         "headers": resp_headers,
-        "body": response_body.decode("utf-8", errors="replace"),
+        "body": response.text,
         "isBase64Encoded": False,
     }
