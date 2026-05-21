@@ -182,13 +182,13 @@ info:
   title: ruwiki-kids
   version: 1.0.0
 paths:
-  /:
+  '/':
     x-yc-apigateway-any-method:
       x-yc-apigateway-integration:
         type: cloud_functions
         function_id: $FUNCTION_ID
         service_account_id: $SA_ID
-  /{path+}:
+  '/{path+}':
     x-yc-apigateway-any-method:
       parameters:
         - name: path

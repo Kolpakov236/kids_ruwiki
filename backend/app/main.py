@@ -61,7 +61,9 @@ def handler(event, context):
     init_db()
 
     method = event.get("httpMethod", "GET")
-    path = event.get("path", "/")
+    path = event.get("path", "/") or "/"
+    if not path.startswith("/"):
+        path = "/" + path
     qs = event.get("queryStringParameters") or {}
     raw_headers = event.get("headers") or {}
     body_raw = event.get("body") or ""
