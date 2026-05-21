@@ -71,10 +71,22 @@ if FRONTEND_DIR.exists() and not _in_cloud_functions:
 
 def handler(event, context):
     """Yandex Cloud Functions entry point — wraps FastAPI ASGI app."""
+    import json as _json
+
+    # Direct ping bypasses ASGI — shows raw event for debugging
+    raw_path = event.get("path", "")
+    if raw_path in ("/ping", "ping"):
+        return {
+            "statusCode": 200,
+            "headers": {"content-type": "application/json"},
+            "body": _json.dumps({"pong": True, "event": event}),
+            "isBase64Encoded": False,
+        }
+
     init_db()
 
     method = event.get("httpMethod", "GET")
-    path = event.get("path", "/") or "/"
+    path = raw_path or "/"
     if not path.startswith("/"):
         path = "/" + path
     qs = event.get("queryStringParameters") or {}
