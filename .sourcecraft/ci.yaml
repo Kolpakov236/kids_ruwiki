@@ -1,8 +1,3 @@
-tokens:
-  yandex-token:
-    service_connection: default-service-connection
-    scope: repo
-
 on:
   push:
     - workflows: [deploy-backend]
@@ -19,80 +14,62 @@ workflows:
           YC_FUNCTION_NAME: "ruwiki-backend"
           YC_FUNCTION_RUNTIME: "python311"
           YC_FUNCTION_ENTRYPOINT: "app.main.app"
-          YC_FUNCTION_MEMORY: "256m"
-          YC_FUNCTION_TIMEOUT: "30s"
+          YC_FUNCTION_MEMORY: "512m"
+          YC_FUNCTION_TIMEOUT: "120s"
           PUBLIC: "true"
         cubes:
-          - name: get-iam-token
+          - name: deploy
             env:
-              ID_TOKEN: ${{ tokens.yandex-token.id_token }}
-              YC_SA_ID: ${{ tokens.yandex-token.service_account_id }}
-            image: cr.yandex/sourcecraft/yc-iam:latest
-          
-          - name: check-and-create-function
-            env:
-              YC_IAM_TOKEN: ${{ cubes.get-iam-token.outputs.IAM_TOKEN }}
-              YC_FOLDER_ID: ${{ tokens.yandex-token.folder_id }}
+              YC_SA_KEY: ${{ secrets.YC_SA_KEY }}
+              YC_FOLDER_ID: ${{ secrets.YC_FOLDER_ID }}
+              YC_LLM_API_KEY: ${{ secrets.YC_LLM_API_KEY }}
+              YC_SECRET_KEY: ${{ secrets.YC_SECRET_KEY }}
             image:
               name: cr.yandex/sourcecraft/yc-cli:latest
               entrypoint: ""
             script:
+              - printf '%s' "$YC_SA_KEY" > /tmp/sa-key.json
+              - yc config set service-account-key /tmp/sa-key.json
+              - yc config set folder-id "$YC_FOLDER_ID"
+              - echo "🔐 Auth configured via service account key"
               - |
-                yc config set folder-id $YC_FOLDER_ID
-                echo "Checking if function exists..."
-                if ! yc serverless function get --name=$YC_FUNCTION_NAME; then
-                  echo "Function does not exist. Creating new function..."
-                  yc serverless function create --name=$YC_FUNCTION_NAME
+                if ! yc serverless function get --name="$YC_FUNCTION_NAME" 2>/dev/null; then
+                  echo "Function not found, creating..."
+                  yc serverless function create --name="$YC_FUNCTION_NAME"
                 else
-                  echo "Function already exists. Proceeding to version deployment..."
+                  echo "Function exists, deploying new version..."
                 fi
-          
-          - name: deploy-function-version
-            env:
-              YC_IAM_TOKEN: ${{ cubes.get-iam-token.outputs.IAM_TOKEN }}
-              YC_FOLDER_ID: ${{ tokens.yandex-token.folder_id }}
-            image:
-              name: cr.yandex/sourcecraft/yc-cli:latest
-              entrypoint: ""
-            script:
-              - mkdir -p ./tmp-function
-              - cp -r "$SOURCE_PATH"/* ./tmp-function/
-              - cd ./tmp-function
-              - echo "Deploying new function version..."
+              - mkdir -p /tmp/fn-src
+              - cp -r "$SOURCE_PATH"/. /tmp/fn-src/
               - |
-                yc config set folder-id $YC_FOLDER_ID
                 yc serverless function version create \
-                  --function-name=$YC_FUNCTION_NAME \
-                  --runtime $YC_FUNCTION_RUNTIME \
-                  --entrypoint $YC_FUNCTION_ENTRYPOINT \
-                  --memory $YC_FUNCTION_MEMORY \
-                  --execution-timeout $YC_FUNCTION_TIMEOUT \
-                  --source-path . \
-                  --environment "RUWIKI_API_BASE=https://ru.ruwiki.ru/api/rest_v1,LLM_PROVIDER=openai_compatible,LLM_MODEL=yandexgpt-3,LLM_BASE_URL=https://llm.api.cloud.yandex.net/foundationModels/v1,LLM_TIMEOUT_SECONDS=120,LLM_MAX_INPUT_CHARS=2500,LLM_TEMPERATURE=0.35,SQLITE_PATH=/tmp/data/app.db,CHROMA_PATH=/tmp/data/chroma,ENABLE_VECTOR_CACHE=false,EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2,ENABLE_LLM_REPAIR=true"
-              
-              - echo "Function deployed successfully!"
-              - echo "Getting function URL..."
-              - |
-                FUNCTION_INFO=$(yc serverless function get --name=$YC_FUNCTION_NAME --format=json)
-                echo "FUNCTION_INFO: $FUNCTION_INFO"
-                FUNCTION_ID=$(echo "$FUNCTION_INFO" | jq -r '.id')
-                echo "FUNCTION_ID: $FUNCTION_ID"
-                echo "Function URL: https://functions.yandexcloud.net/$FUNCTION_ID"
-          
-          - name: make-function-public
-            env:
-              YC_IAM_TOKEN: ${{ cubes.get-iam-token.outputs.IAM_TOKEN }}
-              YC_FOLDER_ID: ${{ tokens.yandex-token.folder_id }}
-            image:
-              name: cr.yandex/sourcecraft/yc-cli:latest
-              entrypoint: ""
-            script:
+                  --function-name="$YC_FUNCTION_NAME" \
+                  --runtime "$YC_FUNCTION_RUNTIME" \
+                  --entrypoint "$YC_FUNCTION_ENTRYPOINT" \
+                  --memory "$YC_FUNCTION_MEMORY" \
+                  --execution-timeout "$YC_FUNCTION_TIMEOUT" \
+                  --source-path /tmp/fn-src \
+                  --environment RUWIKI_SITE_BASE=https://ruwiki.ru \
+                  --environment RUWIKI_REST_API_BASE=https://ruwiki.ru/api/rest_v1 \
+                  --environment LLM_PROVIDER=openai_compatible \
+                  --environment LLM_MODEL=yandexgpt-5-pro \
+                  --environment LLM_BASE_URL=https://llm.api.cloud.yandex.net/v1 \
+                  --environment LLM_TIMEOUT_SECONDS=120 \
+                  --environment LLM_MAX_INPUT_CHARS=2500 \
+                  --environment LLM_TEMPERATURE=0.35 \
+                  --environment LLM_NUM_PREDICT=3000 \
+                  --environment ENABLE_LLM_REPAIR=true \
+                  --environment SQLITE_PATH=/tmp/data/app.db \
+                  --environment CHROMA_PATH=/tmp/data/chroma \
+                  --environment ENABLE_VECTOR_CACHE=false \
+                  --environment "YANDEX_FOLDER_ID=$YC_FOLDER_ID" \
+                  --environment "LLM_API_KEY=$YC_LLM_API_KEY" \
+                  --environment "SECRET_KEY=$YC_SECRET_KEY"
               - |
                 if [ "$PUBLIC" = "true" ]; then
-                  echo "Making function publicly accessible..."
-                  yc config set folder-id $YC_FOLDER_ID
-                  yc serverless function allow-unauthenticated-invoke --name=$YC_FUNCTION_NAME
-                  echo "Function is now publicly accessible"
-                else
-                  echo "Function remains private (PUBLIC not set to true)"
+                  yc serverless function allow-unauthenticated-invoke --name="$YC_FUNCTION_NAME"
+                  echo "✅ Function is publicly accessible"
                 fi
+              - |
+                FUNCTION_ID=$(yc serverless function get --name="$YC_FUNCTION_NAME" --format=json | jq -r '.id')
+                echo "🚀 Deployed! URL: https://functions.yandexcloud.net/$FUNCTION_ID"

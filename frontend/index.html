@@ -4,7 +4,6 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Ruwiki Explain — просто о сложном</title>
-    <meta name="description" content="Понятные объяснения для детей 6–14 лет: как это устроено и работает — с аналогиями, глоссарием и интерактивной викториной.">
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;700;800;900&display=swap" rel="stylesheet" />
@@ -12,218 +11,213 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📚</text></svg>">
   </head>
   <body>
-    <div class="bgDecor" aria-hidden="true"></div>
 
-    <main class="page">
-      <header class="topbar fade-in">
-        <div class="brand">
+    <!-- ─── Auth Modal ────────────────────────────────────────────────────── -->
+    <div id="authModal" class="modalOverlay hidden" role="dialog" aria-modal="true">
+      <div class="modalCard authCard">
+        <button class="modalClose" id="authModalClose" aria-label="Закрыть">✕</button>
+        <div class="authBrand">
           <span class="brandMark">Р</span>
           <span>Ruwiki Explain</span>
         </div>
-        <div id="healthBadge" class="healthBadge">Связь с API…</div>
-      </header>
-
-      <section class="hero fade-in-up">
-        <div class="heroText">
-          <p class="eyebrow">Учимся с улыбкой</p>
-          <h1>Сложные темы — простыми словами</h1>
-          <p class="lead">Введи любую тему — объясним, как это устроено и работает: с аналогиями, глоссарием и интерактивной викториной.</p>
-          <div class="badges">
-            <span>6–14 лет</span>
-            <span>Аналогии</span>
-            <span>Глоссарий</span>
-            <span>Викторина</span>
-          </div>
-        </div>
-        <div class="heroPanel" aria-hidden="true">
-          <div class="bubble large float-soft">Сначала думаем — потом объясняем</div>
-          <div class="bubble float-soft delay-1">Лучшая аналогия для каждой темы</div>
-          <div class="bubble accent float-soft delay-2">В конце — интерактивная викторина!</div>
-        </div>
-      </section>
-
-      <section class="card controls fade-in-up delay-1">
-        <div class="sectionTitle">
-          <p class="eyebrow">Запрос</p>
-          <h2>Что объяснить?</h2>
+        <div class="authTabs">
+          <button class="authTab active" data-tab="login">Войти</button>
+          <button class="authTab" data-tab="register">Регистрация</button>
         </div>
 
-        <div class="examples" aria-label="Примеры тем">
-          <button class="exampleBtn" type="button" data-query="Квантовая механика">Квантовая механика</button>
-          <button class="exampleBtn" type="button" data-query="Фотосинтез">Фотосинтез</button>
-          <button class="exampleBtn" type="button" data-query="Древний Египет">Древний Египет</button>
-          <button class="exampleBtn" type="button" data-query="Черная дыра">Черная дыра</button>
-        </div>
+        <!-- Login -->
+        <form id="loginForm" class="authForm">
+          <label>Email<input type="email" id="loginEmail" placeholder="you@mail.ru" required /></label>
+          <label>Пароль<input type="password" id="loginPassword" placeholder="••••••" required /></label>
+          <p id="loginError" class="authError hidden"></p>
+          <button type="submit" class="primaryBtn fullWidth">Войти</button>
+        </form>
 
-        <label>
-          Тема
-          <textarea id="query" maxlength="100" rows="2" placeholder="Например: электричество, иммунитет, динозавры"></textarea>
-        </label>
-
-        <div class="formGrid pair">
+        <!-- Register -->
+        <form id="registerForm" class="authForm hidden">
+          <label>Email<input type="email" id="regEmail" placeholder="you@mail.ru" required /></label>
+          <label>Имя<input type="text" id="regName" placeholder="Как вас зовут?" /></label>
           <label>
-            Возраст
-            <select id="age">
-              <option value="6">6 лет</option>
-              <option value="7">7 лет</option>
-              <option value="8">8 лет</option>
-              <option value="9">9 лет</option>
-              <option value="10" selected>10 лет</option>
-              <option value="11">11 лет</option>
-              <option value="12">12 лет</option>
-              <option value="13">13 лет</option>
-              <option value="14">14 лет</option>
-            </select>
+            Дата рождения
+            <input type="date" id="regBirthDate" />
+            <span class="hint">Заполните, чтобы не вводить возраст каждый раз</span>
           </label>
-          <label>
-            Формат
-            <select id="mode">
-              <option value="simple">Очень просто</option>
-              <option value="balanced" selected>Сбалансированно</option>
-              <option value="detailed">Подробнее</option>
-            </select>
-          </label>
-        </div>
+          <label>Пароль<input type="password" id="regPassword" placeholder="минимум 6 символов" required /></label>
+          <p id="registerError" class="authError hidden"></p>
+          <button type="submit" class="primaryBtn fullWidth">Создать аккаунт</button>
+        </form>
 
-        <div class="formGrid">
-          <label class="backendField full">
-            API сервера
-            <input id="backendUrl" type="url" value="http://127.0.0.1:8000" />
-            <div class="hint">Полный адрес с http://</div>
-          </label>
-        </div>
-
-        <!-- Fast mode toggle -->
-        <div class="fastModeRow">
-          <label class="toggleLabel" for="fastModeToggle">
-            <input id="fastModeToggle" type="checkbox" class="toggleInput" />
-            <span class="toggleTrack"><span class="toggleThumb"></span></span>
-            <span class="toggleText">⚡ Быстрый режим <span class="toggleSub">(без метрик — чистая скорость)</span></span>
-          </label>
-        </div>
-
-        <div class="actions">
-          <button id="submitBtn" class="primaryBtn" type="button">Объяснить!</button>
-          <button id="micBtn" class="ghostBtn" type="button">🎤 Говорить</button>
-          <button id="clearBtn" class="ghostBtn" type="button">Очистить кэш</button>
-        </div>
-
-        <p id="status" class="status"></p>
-        <div id="progress" class="progress hidden">
-          <span>Ищу статью</span>
-          <span>Анализирую</span>
-          <span>Упрощаю</span>
-          <span>Проверяю</span>
-        </div>
-      </section>
-
-      <!-- Bubble-pop mini game (shown while loading) -->
-      <div id="miniGame" class="miniGame hidden" aria-hidden="true">
-        <canvas id="gameCanvas"></canvas>
-        <div class="miniGameHud">
-          <span class="miniGameScore">💥 <span id="gameScoreVal">0</span></span>
-          <span class="miniGameHint">Лопай пузыри пока думаем!</span>
+        <div id="oauthButtons" class="oauthButtons hidden">
+          <div class="oauthDivider"><span>или</span></div>
+          <button id="vkBtn" class="oauthBtn vkBtn" type="button">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M15.07 2H8.93C3.33 2 2 3.33 2 8.93v6.14C2 20.67 3.33 22 8.93 22h6.14C20.67 22 22 20.67 22 15.07V8.93C22 3.33 20.67 2 15.07 2zm2.26 13.68h-1.57c-.59 0-.77-.47-1.83-1.54-.92-.9-1.32-.99-1.55-.99-.32 0-.41.09-.41.52v1.41c0 .37-.12.59-1.1.59-1.62 0-3.41-.98-4.67-2.8C4.85 10.62 4.5 8.5 4.5 8.07c0-.23.09-.44.52-.44h1.57c.39 0 .54.18.69.61.76 2.19 2.03 4.11 2.55 4.11.2 0 .29-.09.29-.59V9.5c-.06-1.06-.62-1.15-.62-1.52 0-.18.15-.37.39-.37h2.47c.33 0 .44.18.44.55v2.95c0 .33.15.44.24.44.2 0 .37-.11.74-.48 1.14-1.27 1.95-3.24 1.95-3.24.11-.23.29-.44.68-.44h1.57c.47 0 .57.24.47.55-.2.9-2.09 3.58-2.09 3.58-.17.26-.23.38 0 .67.17.21.72.67 1.09 1.08.68.74 1.19 1.37 1.33 1.8.15.43-.08.65-.51.65z"/></svg>
+            Войти через ВКонтакте
+          </button>
+          <button id="yandexBtn" class="oauthBtn yandexBtn" type="button">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M2 12C2 6.477 6.477 2 12 2s10 4.477 10 10-4.477 10-10 10S2 17.523 2 12zm11.424-5.6h-1.2c-1.648 0-2.52.88-2.52 2.2 0 1.112.48 1.776 1.504 2.432l.832.56-2.4 3.608H7.784l2.16-3.232c-1.304-.96-2.04-1.92-2.04-3.44 0-1.984 1.368-3.328 3.848-3.328h2.568V17.6h-1.696V6.4h.8z"/></svg>
+            Войти через Яндекс
+          </button>
         </div>
       </div>
+    </div>
 
-      <!-- Result card -->
-      <section id="result" class="card result hidden fade-in-up">
+    <!-- ─── Quiz Modal ────────────────────────────────────────────────────── -->
+    <div id="quizModal" class="modalOverlay hidden" role="dialog" aria-modal="true">
+      <div class="modalCard quizModalCard">
+        <button class="modalClose" id="quizModalClose" aria-label="Закрыть">✕</button>
+        <h2 class="quizModalTitle">🎮 Мини-викторина</h2>
+        <div id="quizModalContainer"></div>
+      </div>
+    </div>
 
-        <!-- Metrics strip (hidden in fast mode) -->
-        <div id="metricsStrip" class="metricsStrip">
-          <div class="accuracyRing" aria-hidden="true">
-            <svg viewBox="0 0 36 36">
-              <path class="accuracyBg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-              <path id="accuracyArc" class="accuracyArc" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-            </svg>
-            <span id="accuracyPercent" class="accuracyPercent">—</span>
-          </div>
-          <div class="metricsCopy">
-            <p class="metricsTitle" id="accuracyLabel">Качество объяснения</p>
-            <p id="accuracyDetail" class="metricsDetail"></p>
-            <div id="metricsCards" class="metricsCards">
-              <div class="mCard"><span class="mLabel">Простота</span><strong id="mSimplicity">—</strong></div>
-              <div class="mCard"><span class="mLabel">Примеры</span><strong id="mExamples">—</strong></div>
-              <div class="mCard"><span class="mLabel">Чёткость</span><strong id="mClarity">—</strong></div>
-              <div class="mCard"><span class="mLabel">Скорость</span><strong id="mLatency">—</strong></div>
+    <!-- ─── App Layout ────────────────────────────────────────────────────── -->
+    <div class="appLayout">
+
+      <!-- Sidebar -->
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebarBrand">
+          <span class="brandMark">Р</span>
+          <span>Ruwiki</span>
+        </div>
+
+        <nav class="sidebarNav">
+          <button class="navItem active" data-panel="chat" title="ИИ Ассистент">
+            <span class="navIcon">🤖</span>
+            <span class="navLabel">ИИ Ассистент</span>
+          </button>
+          <button class="navItem" data-panel="chats" title="Мои чаты">
+            <span class="navIcon">💬</span>
+            <span class="navLabel">Мои чаты</span>
+          </button>
+          <button class="navItem" data-panel="info" title="Информация">
+            <span class="navIcon">ℹ️</span>
+            <span class="navLabel">Информация</span>
+          </button>
+        </nav>
+
+        <button class="newChatBtn" id="newChatBtn" title="Новый чат">
+          <span class="navIcon">✏️</span>
+          <span class="navLabel">Новый чат</span>
+        </button>
+
+        <div class="sidebarChatsList" id="sidebarChatsList">
+          <p class="sidebarChatsEmpty">Войдите, чтобы сохранять историю</p>
+        </div>
+      </aside>
+
+      <!-- Main area -->
+      <div class="mainArea">
+
+        <!-- Topbar -->
+        <header class="topbar">
+          <button class="sidebarToggleBtn" id="sidebarToggle" aria-label="Меню">☰</button>
+
+          <div class="topbarRight">
+            <div class="modelSelector" id="modelSelectorWrap">
+              <button class="modelBtn" id="modelBtn" title="Выбрать модель">
+                <span id="modelBtnLabel">⚡ Быстрый</span>
+                <span class="modelBtnArrow">▾</span>
+              </button>
+              <div class="modelDropdown hidden" id="modelDropdown">
+                <button class="modelOption active" data-metrics="false" data-model-id="">⚡ Быстрый режим<span class="modelOptionSub">без метрик — чистая скорость</span></button>
+                <button class="modelOption" data-metrics="true" data-model-id="">✨ Качественный<span class="modelOptionSub">с проверкой фактов</span></button>
+              </div>
+            </div>
+
+            <div id="userWidget" class="userWidget">
+              <button class="loginBtn" id="loginBtn" type="button">Войти</button>
             </div>
           </div>
-        </div>
+        </header>
 
-        <div class="resultHeader">
-          <div>
-            <p class="eyebrow">Результат</p>
-            <h2 id="sourceTitle"></h2>
-            <a id="sourceUrl" target="_blank" rel="noreferrer"></a>
+        <!-- Chat panel -->
+        <div class="panel" id="panelChat">
+
+          <!-- Welcome screen (shown when no messages) -->
+          <div class="welcomeScreen" id="welcomeScreen">
+            <div class="welcomeInner">
+              <div class="welcomeEmoji">📚</div>
+              <h1 class="welcomeTitle">Что хотите узнать сегодня?</h1>
+              <p class="welcomeSub">Объясним любую тему простыми словами — с аналогиями, примерами и мини-викториной</p>
+              <div class="welcomeExamples" id="welcomeExamples">
+                <button class="exampleChip" data-query="Квантовая механика">⚛️ Квантовая механика</button>
+                <button class="exampleChip" data-query="Фотосинтез">🌿 Фотосинтез</button>
+                <button class="exampleChip" data-query="Чёрная дыра">🌌 Чёрная дыра</button>
+                <button class="exampleChip" data-query="Иммунная система">🛡️ Иммунная система</button>
+              </div>
+            </div>
           </div>
-          <div class="resultActions">
-            <button id="copyBtn" class="ghostBtn" type="button">Скопировать</button>
-            <button id="speakBtn" class="ghostBtn" type="button">🔊 Озвучить</button>
-          </div>
+
+          <!-- Messages -->
+          <div class="messages" id="messages"></div>
+
         </div>
 
-        <!-- Main idea -->
-        <div class="mainIdea">
-          <span>Главная мысль</span>
-          <p id="mainIdea"></p>
-        </div>
-
-        <!-- Explanation -->
-        <div class="explanationBox">
-          <h3 class="sectionHeading">💡 Простое объяснение</h3>
-          <div id="simplifiedText" class="text"></div>
-        </div>
-
-        <!-- Analogies -->
-        <div id="analogiesBox" class="analogiesBox hidden">
-          <h3 class="sectionHeading">🎯 Аналогии</h3>
-          <ul id="analogies" class="analogiesList"></ul>
-        </div>
-
-        <!-- Glossary -->
-        <div id="glossaryBox" class="glossaryBox hidden">
-          <h3 class="sectionHeading">📖 Ключевые термины</h3>
-          <ul id="glossary" class="glossaryList"></ul>
-        </div>
-
-        <!-- Interactive quiz -->
-        <div class="quizSection">
-          <h3 class="sectionHeading">🎮 Мини-викторина</h3>
-          <div id="quizContainer" class="quizContainer">
-            <p class="emptyText">Вопросы появятся после следующего ответа.</p>
+        <!-- Chats panel -->
+        <div class="panel hidden" id="panelChats">
+          <div class="panelInner">
+            <h2>Мои чаты</h2>
+            <div id="chatsListFull" class="chatsListFull"></div>
           </div>
         </div>
 
-        <!-- User rating -->
-        <div id="ratingBox" class="ratingBox hidden">
-          <p class="ratingTitle">Насколько понятно объяснение?</p>
-          <div class="starRow" id="starRow">
-            <button class="starBtn" data-stars="1">★</button>
-            <button class="starBtn" data-stars="2">★</button>
-            <button class="starBtn" data-stars="3">★</button>
-            <button class="starBtn" data-stars="4">★</button>
-            <button class="starBtn" data-stars="5">★</button>
+        <!-- Info panel -->
+        <div class="panel hidden" id="panelInfo">
+          <div class="panelInner infoPanel">
+            <h2>О сервисе</h2>
+            <p>Ruwiki Explain — сервис для детей 6–14 лет, который объясняет сложные темы простыми словами с аналогиями, глоссарием и викториной.</p>
+            <h3>Источники</h3>
+            <p>Все статьи берутся с <a href="https://ruwiki.ru" target="_blank" rel="noreferrer">Рувики</a> (CC BY-SA 3.0).</p>
+            <h3>Как пользоваться</h3>
+            <ul>
+              <li>Введите тему в поле ввода или выберите пример</li>
+              <li>Используйте микрофон для голосового ввода 🎤</li>
+              <li>Нажмите «Викторина» чтобы проверить знания 🎮</li>
+              <li>Нажмите «Озвучить» чтобы прослушать ответ 🔊</li>
+            </ul>
+            <h3>Модели</h3>
+            <p id="infoModelText">Подождите...</p>
+            <p class="infoCopyright">© 2026 Ruwiki Explain</p>
           </div>
-          <p id="ratingMsg" class="ratingMsg hidden">Спасибо за оценку! 🎉</p>
         </div>
 
-        <!-- Reasoning (collapsed) -->
-        <details id="reasoningDetails" class="reasoningDetails hidden">
-          <summary>Как модель думала по шагам</summary>
-          <ol id="reasoningSteps" class="reasoningSteps"></ol>
-        </details>
+        <!-- Input area (always visible) -->
+        <div class="inputArea">
+          <!-- Bubble pop game (shown while loading) -->
+          <div id="miniGame" class="miniGame hidden" aria-hidden="true">
+            <canvas id="gameCanvas"></canvas>
+            <div class="miniGameHud">
+              <span class="miniGameScore">💥 <span id="gameScoreVal">0</span></span>
+              <span class="miniGameHint">Лопай пузыри пока думаем!</span>
+            </div>
+          </div>
 
-        <!-- Technical details (collapsed) -->
-        <details>
-          <summary>Технические детали</summary>
-          <pre id="meta"></pre>
-        </details>
-      </section>
+          <!-- Progress steps -->
+          <div id="progress" class="progress hidden">
+            <span>Ищу статью</span>
+            <span>Анализирую</span>
+            <span>Упрощаю</span>
+            <span>Проверяю</span>
+          </div>
 
-      <footer class="footer">
-        <p>© 2026 Ruwiki Explain. Источник статей: Рувики (CC BY-SA 3.0).</p>
-      </footer>
-    </main>
+          <p id="status" class="statusMsg"></p>
+
+          <div class="inputRow">
+            <textarea
+              id="query"
+              maxlength="100"
+              rows="1"
+              placeholder="Спросите что угодно… например: электричество, динозавры, чёрные дыры"
+            ></textarea>
+            <button id="micBtn" class="iconBtn" type="button" title="Голосовой ввод" aria-label="Голосовой ввод">🎤</button>
+            <button id="submitBtn" class="sendBtn" type="button" aria-label="Отправить">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
 
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
     <script src="./app.js"></script>
