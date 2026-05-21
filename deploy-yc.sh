@@ -92,6 +92,12 @@ if [ -f "$SCRIPT_DIR/backend/requirements.cf.txt" ]; then
   echo "   Using requirements.cf.txt (without heavy ML packages)"
 fi
 
+# Include frontend so FastAPI can serve it as static files
+if [ -d "$SCRIPT_DIR/frontend" ]; then
+  cp -r "$SCRIPT_DIR/frontend" "$TMP_SRC/frontend"
+  echo "   Included frontend/"
+fi
+
 echo "   Файлы для деплоя:"
 ls "$TMP_SRC"
 
@@ -161,21 +167,69 @@ if ! yc serverless function allow-unauthenticated-invoke --name="$FUNCTION_NAME"
 fi
 
 # ---------------------------------------------------------------------------
+# API Gateway (поддержка sub-путей: /health, /simplify, /chats и т.д.)
+# ---------------------------------------------------------------------------
+GATEWAY_NAME="${YC_GATEWAY_NAME:-ruwiki-gateway}"
+FUNCTION_ID=$(yc serverless function get --name="$FUNCTION_NAME" --format=json | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+SA_ID=$(python3 -c "import json; d=json.load(open('$SCRIPT_DIR/key.json')); print(d['service_account_id'])" 2>/dev/null || true)
+
+echo ""
+echo "🔗  Настройка API Gateway '$GATEWAY_NAME'..."
+
+cat > /tmp/ruwiki-gateway.yaml <<GWEOF
+openapi: 3.0.0
+info:
+  title: ruwiki-kids
+  version: 1.0.0
+paths:
+  /:
+    x-yc-apigateway-any-method:
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: $FUNCTION_ID
+        service_account_id: $SA_ID
+  /{path+}:
+    x-yc-apigateway-any-method:
+      parameters:
+        - name: path
+          in: path
+          required: false
+          schema:
+            type: string
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: $FUNCTION_ID
+        service_account_id: $SA_ID
+GWEOF
+
+if ! yc serverless api-gateway get --name="$GATEWAY_NAME" &>/dev/null; then
+  echo "   Создаю gateway..."
+  yc serverless api-gateway create --name="$GATEWAY_NAME" --spec=/tmp/ruwiki-gateway.yaml
+else
+  echo "   Обновляю gateway..."
+  yc serverless api-gateway update --name="$GATEWAY_NAME" --spec=/tmp/ruwiki-gateway.yaml
+fi
+
+GATEWAY_DOMAIN=$(yc serverless api-gateway get --name="$GATEWAY_NAME" --format=json | python3 -c "import sys,json; print(json.load(sys.stdin)['domain'])")
+GATEWAY_URL="https://$GATEWAY_DOMAIN"
+echo "   ✅ Gateway: $GATEWAY_URL"
+
+# ---------------------------------------------------------------------------
 # Итог
 # ---------------------------------------------------------------------------
-FUNCTION_ID=$(yc serverless function get --name="$FUNCTION_NAME" --format=json | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 FUNCTION_URL="https://functions.yandexcloud.net/$FUNCTION_ID"
 
 echo ""
 echo "════════════════════════════════════════════════"
 echo "✅  Деплой завершён!"
-echo "🌐  URL: $FUNCTION_URL"
+echo "🌐  Приложение: $GATEWAY_URL"
+echo "🔧  Функция:    $FUNCTION_URL"
 echo ""
 echo "📝  Проверка:"
-echo "    curl $FUNCTION_URL/health"
+echo "    curl $GATEWAY_URL/health"
 echo ""
 echo "📝  Если используете OAuth, обновите FRONTEND_URL в backend/.env:"
-echo "    FRONTEND_URL=$FUNCTION_URL"
+echo "    FRONTEND_URL=$GATEWAY_URL"
 echo "════════════════════════════════════════════════"
 
 # Очистка

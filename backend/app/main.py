@@ -15,7 +15,11 @@ from app.routes.chats import router as chats_router
 from app.routes.simplify import router as simplify_router
 from app.services.db import init_db
 
-FRONTEND_DIR = pathlib.Path(__file__).parent.parent.parent / "frontend"
+# Local: backend/app/main.py → ../../frontend; Cloud Functions: app/main.py → ../frontend
+_here = pathlib.Path(__file__).parent
+FRONTEND_DIR = _here.parent.parent / "frontend"
+if not FRONTEND_DIR.exists():
+    FRONTEND_DIR = _here.parent / "frontend"
 
 
 class PrivateNetworkAccessMiddleware(BaseHTTPMiddleware):
