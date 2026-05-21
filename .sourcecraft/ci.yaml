@@ -13,7 +13,7 @@ workflows:
           SOURCE_PATH: "./backend"
           YC_FUNCTION_NAME: "ruwiki-backend"
           YC_FUNCTION_RUNTIME: "python311"
-          YC_FUNCTION_ENTRYPOINT: "app.main.app"
+          YC_FUNCTION_ENTRYPOINT: "app.main.handler"
           YC_FUNCTION_MEMORY: "512m"
           YC_FUNCTION_TIMEOUT: "120s"
           PUBLIC: "true"

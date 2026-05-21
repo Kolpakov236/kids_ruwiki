@@ -143,7 +143,7 @@ if [ -n "${YANDEX_CLIENT_SECRET:-}" ]; then ENV_ARGS+=(--environment "YANDEX_CLI
 yc serverless function version create \
   --function-name="$FUNCTION_NAME" \
   --runtime="python311" \
-  --entrypoint="app.main.app" \
+  --entrypoint="app.main.handler" \
   --memory="512m" \
   --execution-timeout="120s" \
   --source-path="$TMP_SRC" \
@@ -154,7 +154,11 @@ yc serverless function version create \
 # ---------------------------------------------------------------------------
 echo ""
 echo "🌐  Открываю публичный доступ..."
-yc serverless function allow-unauthenticated-invoke --name="$FUNCTION_NAME"
+if ! yc serverless function allow-unauthenticated-invoke --name="$FUNCTION_NAME" 2>&1; then
+  echo "⚠️   Не удалось выставить публичный доступ автоматически."
+  echo "     Сделайте это вручную в консоли YC:"
+  echo "     https://console.yandex.cloud/functions → $FUNCTION_NAME → Доступ → Без токена"
+fi
 
 # ---------------------------------------------------------------------------
 # Итог
