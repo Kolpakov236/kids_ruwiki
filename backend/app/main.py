@@ -15,11 +15,10 @@ from app.routes.chats import router as chats_router
 from app.routes.simplify import router as simplify_router
 from app.services.db import init_db
 
-# Local: backend/app/main.py → ../../frontend; Cloud Functions: app/main.py → ../frontend
-_here = pathlib.Path(__file__).parent
-FRONTEND_DIR = _here.parent.parent / "frontend"
-if not FRONTEND_DIR.exists():
-    FRONTEND_DIR = _here.parent / "frontend"
+# YC Functions: code is always at /function/code/; locally: backend/app/ → ../../frontend
+_CF_FRONTEND = pathlib.Path("/function/code/frontend")
+_LOCAL_FRONTEND = pathlib.Path(__file__).parent.parent.parent / "frontend"
+FRONTEND_DIR = _CF_FRONTEND if _CF_FRONTEND.exists() else _LOCAL_FRONTEND
 
 
 class PrivateNetworkAccessMiddleware(BaseHTTPMiddleware):
@@ -49,6 +48,18 @@ app.include_router(chats_router)
 @app.on_event("startup")
 def _startup() -> None:
     init_db()
+
+
+@app.get("/debug/fs")
+def debug_fs():
+    import os
+    cf = pathlib.Path("/function/code")
+    return {
+        "frontend_dir": str(FRONTEND_DIR),
+        "frontend_exists": FRONTEND_DIR.exists(),
+        "frontend_files": sorted(os.listdir(FRONTEND_DIR)) if FRONTEND_DIR.exists() else [],
+        "cf_root": sorted(os.listdir(cf)) if cf.exists() else "no /function/code",
+    }
 
 
 # Serve frontend static files (must be last so API routes take priority)
