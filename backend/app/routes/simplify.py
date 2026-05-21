@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import time
+from typing import Optional
+
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.schemas import HealthResponse, RatingRequest, RatingResponse, SimplifyRequest, SimplifyResponse
 from app.settings import settings
+from app.services.auth_service import get_optional_user_id
 from app.services.cache import clear_sqlite_cache, save_rating
+from app.services.chat_service import save_chat_message
 from app.services.llm import LLMError
+from app.services.log_service import log_usage
 from app.services.pipeline import simplify_pipeline
 
 router = APIRouter()
@@ -25,17 +31,28 @@ def _is_llm_request(e: Exception) -> bool:
 
 
 @router.post("/simplify", response_model=SimplifyResponse)
-async def simplify(req: SimplifyRequest) -> SimplifyResponse:
+async def simplify(
+    req: SimplifyRequest,
+    user_id: Optional[int] = Depends(get_optional_user_id),
+) -> SimplifyResponse:
+    t0 = time.perf_counter()
     try:
-        return await simplify_pipeline(
+        result = await simplify_pipeline(
             query=req.query,
             age=req.age,
             mode=req.mode,
             enable_metrics=req.enable_metrics,
+            model_id=req.model_id,
         )
     except ValueError as e:
+        latency = int((time.perf_counter() - t0) * 1000)
+        log_usage("simplify", user_id=user_id, chat_id=req.chat_id, query=req.query,
+                  age=req.age, mode=req.mode, latency_ms=latency, success=False, error_text=str(e))
         raise HTTPException(status_code=400, detail=str(e)) from e
     except LLMError as e:
+        latency = int((time.perf_counter() - t0) * 1000)
+        log_usage("simplify", user_id=user_id, chat_id=req.chat_id, query=req.query,
+                  age=req.age, mode=req.mode, latency_ms=latency, success=False, error_text=str(e))
         raise HTTPException(status_code=502, detail=_public_llm_error(str(e))) from e
     except httpx.ConnectError as e:
         if _is_llm_request(e):
@@ -52,13 +69,43 @@ async def simplify(req: SimplifyRequest) -> SimplifyResponse:
         url = str(getattr(getattr(e, "request", None), "url", "unknown_url"))
         raise HTTPException(status_code=504, detail=f"upstream_timeout:{url}") from e
     except Exception as e:
+        latency = int((time.perf_counter() - t0) * 1000)
+        log_usage("simplify", user_id=user_id, query=req.query, age=req.age, mode=req.mode,
+                  latency_ms=latency, success=False, error_text=f"{type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
+
+    latency = int((time.perf_counter() - t0) * 1000)
+
+    # Save to chat history if user is logged in and chat_id provided
+    if user_id and req.chat_id:
+        try:
+            response_dict = result.model_dump()
+            save_chat_message(req.chat_id, "assistant", req.query, response_dict)
+        except Exception:
+            pass  # Chat save failures are non-critical
+
+    log_usage(
+        "simplify",
+        user_id=user_id,
+        chat_id=req.chat_id,
+        query=req.query,
+        age=req.age,
+        mode=req.mode,
+        model=result.model.get("name") if result.model else None,
+        latency_ms=latency,
+        cached=result.cached,
+    )
+    return result
 
 
 @router.post("/rate", response_model=RatingResponse)
-async def rate(req: RatingRequest) -> RatingResponse:
+async def rate(
+    req: RatingRequest,
+    user_id: Optional[int] = Depends(get_optional_user_id),
+) -> RatingResponse:
     try:
         save_rating(history_key=req.history_key, stars=req.stars, comment=req.comment)
+        log_usage("rate", user_id=user_id, extras={"history_key": req.history_key, "stars": req.stars})
         return RatingResponse(ok=True, message="Спасибо за оценку!")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -73,6 +120,9 @@ async def health() -> HealthResponse:
         model=settings.llm_model,
         api_key_configured=bool(api_key),
         cache_enabled=settings.enable_vector_cache,
+        available_models=settings.available_models,
+        vk_enabled=settings.vk_enabled,
+        yandex_enabled=settings.yandex_oauth_enabled,
     )
 
 
@@ -83,6 +133,16 @@ async def clear_cache() -> dict:
 
 
 def _public_llm_error(detail: str) -> str:
+    if detail.startswith("llm_api_400"):
+        body = detail[len("llm_api_400:"):].strip()
+        return f"LLM API вернул ошибку 400 (неверный запрос). Проверьте LLM_API_KEY и LLM_MODEL в .env. Ответ API: {body[:300]}"
+    if detail.startswith("llm_api_401") or detail.startswith("llm_api_403"):
+        return "Ошибка авторизации LLM API (401/403). Проверьте LLM_API_KEY в backend/.env."
+    if detail.startswith("llm_api_429"):
+        return "Превышен лимит запросов к LLM API (429). Подождите немного и повторите."
+    if detail.startswith("llm_api_"):
+        code = detail.split(":")[0].replace("llm_api_", "")
+        return f"LLM API вернул ошибку {code}. Подробности в логах сервера."
     if detail.startswith("gemini_response_truncated"):
         return "Ответ модели был обрезан. Увеличьте LLM_NUM_PREDICT и повторите запрос."
     if detail.startswith("gemini_response_blocked"):

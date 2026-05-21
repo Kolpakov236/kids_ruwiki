@@ -246,7 +246,11 @@ async def simplify_pipeline(
     age: int,
     mode: str = "balanced",
     enable_metrics: bool = True,
+    model_id: str | None = None,
 ) -> SimplifyResponse:
+    from app.services.llm import _model_override
+    tok = _model_override.set(model_id) if model_id else None
+
     t0 = time.perf_counter()
     timings: dict[str, int] = {}
 
@@ -280,7 +284,8 @@ async def simplify_pipeline(
     original_text = _mvp_article_slice(article.text)
     key_facts = extract_key_facts(original_text)
 
-    model = {"provider": settings.llm_provider, "name": settings.llm_model}
+    effective_model = model_id or settings.llm_model
+    model = {"provider": settings.llm_provider, "name": effective_model}
     key = cache_key(
         query=query,
         age_group=age_group,
@@ -455,6 +460,9 @@ async def simplify_pipeline(
     else:
         # Fast mode: still persist to SQLite so repeated exact requests use cache
         put_sqlite_cached(key, payload)
+
+    if tok is not None:
+        _model_override.reset(tok)
 
     total_ms = int((time.perf_counter() - t0) * 1000)
     timings["total"] = total_ms

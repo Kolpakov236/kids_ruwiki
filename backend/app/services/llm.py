@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 import logging
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
 from app.settings import settings
+
+# Per-request model override (set by pipeline when model_id is specified)
+_model_override: ContextVar[str | None] = ContextVar("model_override", default=None)
 
 logger = logging.getLogger(__name__)
 
@@ -482,31 +486,37 @@ async def _openai_compatible_chat(messages: list[dict[str, str]]) -> dict[str, A
         base = base.replace("/foundationModels/v1", "/v1")
 
     url = f"{base}/chat/completions" if base.endswith("/v1") else f"{base}/v1/chat/completions"
+    is_yandex = _is_yandex(base)
+
     headers: dict[str, str] = {}
     if settings.llm_api_key:
-        if _is_yandex(base):
-            headers["Authorization"] = f"Api-Key {settings.llm_api_key}"
-        else:
-            headers["Authorization"] = f"Bearer {settings.llm_api_key}"
+        headers["Authorization"] = f"Api-Key {settings.llm_api_key}" if is_yandex else f"Bearer {settings.llm_api_key}"
     if settings.openai_project:
-        if _is_yandex(base):
-            headers["x-folder-id"] = settings.openai_project
-        else:
-            headers["OpenAI-Project"] = settings.openai_project
-    payload = {
-        "model": settings.llm_model,
+        headers["x-folder-id" if is_yandex else "OpenAI-Project"] = settings.openai_project
+
+    effective_model = _model_override.get() or settings.llm_model
+
+    payload: dict[str, Any] = {
+        "model": effective_model,
         "messages": messages,
         "temperature": settings.llm_temperature,
         "max_tokens": settings.llm_num_predict,
-        "response_format": {"type": "json_object"},
     }
+    # response_format=json_object is NOT supported by Yandex Foundation Models;
+    # JSON is enforced via the system prompt ("Ответь только валидным JSON").
+    if not is_yandex:
+        payload["response_format"] = {"type": "json_object"}
+
     async with httpx.AsyncClient(
         timeout=settings.llm_timeout_seconds,
         follow_redirects=True,
         headers=headers,
     ) as client:
         r = await client.post(url, json=payload)
-        r.raise_for_status()
+        if not r.is_success:
+            body = r.text[:600]
+            logger.error("LLM API %s %s: %s", r.status_code, url, body)
+            raise LLMError(f"llm_api_{r.status_code}:{body}")
         return r.json()
 
 
