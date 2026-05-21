@@ -1,113 +1,178 @@
 #!/bin/bash
-# Скрипт для деплоя backend на Yandex Cloud Functions
-# Требуется установленный yc CLI и настроенный профиль
+# Деплой Ruwiki Kids Backend → Yandex Cloud Functions
+# Использование:
+#   1. yc config set service-account-key key.json
+#   2. yc config set folder-id <folder_id>
+#   3. bash deploy-yc.sh
 
-set -e
+set -euo pipefail
 
-echo "🚀 Деплой бэкенда Рувик Kids на Yandex Cloud Functions"
+FUNCTION_NAME="${YC_FUNCTION_NAME:-ruwiki-backend}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="$SCRIPT_DIR/backend/.env"
+TMP_SRC="/tmp/ruwiki-fn-src"
 
-# Проверяем наличие yc CLI
-if ! command -v yc &> /dev/null; then
-    echo "❌ Yandex Cloud CLI (yc) не установлен"
-    echo "Установите: https://cloud.yandex.ru/docs/cli/quickstart"
-    exit 1
+# ---------------------------------------------------------------------------
+# Проверки
+# ---------------------------------------------------------------------------
+if ! command -v yc &>/dev/null; then
+  echo "❌  YC CLI не найден. Установите: https://yandex.cloud/ru/docs/cli/quickstart"
+  exit 1
 fi
 
-# Проверяем авторизацию
-if ! yc config list &> /dev/null; then
-    echo "❌ Не авторизованы в Yandex Cloud"
-    echo "Выполните: yc init"
-    exit 1
+if ! yc config list &>/dev/null; then
+  echo "❌  YC CLI не авторизован. Выполните:"
+  echo "    yc config set service-account-key key.json"
+  echo "    yc config set folder-id <folder_id>"
+  exit 1
 fi
 
-# Создаем временную директорию для деплоя
-TEMP_DIR=$(mktemp -d)
-echo "📁 Временная директория: $TEMP_DIR"
+YC_FOLDER_ID=$(yc config get folder-id 2>/dev/null || true)
+if [ -z "$YC_FOLDER_ID" ]; then
+  echo "❌  folder-id не задан. Выполните: yc config set folder-id <folder_id>"
+  exit 1
+fi
 
-# Копируем backend
-cp -r backend/* "$TEMP_DIR/"
-cp backend/.env.example "$TEMP_DIR/.env" 2>/dev/null || true
-
-# Создаем requirements.txt для Cloud Functions (минимальный набор)
-cat > "$TEMP_DIR/requirements.txt" << EOF
-fastapi>=0.115
-uvicorn[standard]>=0.30
-pydantic>=2.7
-pydantic-settings>=2.3
-httpx>=0.27
-python-dotenv>=1.0
-beautifulsoup4>=4.12
-lxml>=5.2
-EOF
-
-# Создаем файл для Yandex Cloud Functions
-cat > "$TEMP_DIR/yandex-cloud-config.yaml" << EOF
-runtime: python311
-entrypoint: app.main.app
-memory: 256MB
-execution_timeout: 30s
-environment:
-  RUWIKI_API_BASE: "https://ru.ruwiki.ru/api/rest_v1"
-  LLM_PROVIDER: "openai_compatible"
-  LLM_MODEL: "yandexgpt-3"
-  LLM_BASE_URL: "https://llm.api.cloud.yandex.net/foundationModels/v1"
-  LLM_TIMEOUT_SECONDS: "120"
-  LLM_MAX_INPUT_CHARS: "2500"
-  LLM_TEMPERATURE: "0.35"
-  LLM_NUM_CTX: "4096"
-  LLM_NUM_PREDICT: "5000"
-  ENABLE_LLM_REPAIR: "true"
-  SQLITE_PATH: "/tmp/app.db"
-  ENABLE_VECTOR_CACHE: "false"
-  EMBEDDING_MODEL: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-EOF
-
-echo "📦 Подготовка завершена"
-
-# Запрашиваем имя функции
-read -p "Введите имя функции (по умолчанию: ruwiki-backend): " FUNCTION_NAME
-FUNCTION_NAME=${FUNCTION_NAME:-ruwiki-backend}
-
-# Запрашиваем API ключ
-read -p "Введите API ключ Yandex AI Studio (оставьте пустым для использования переменной окружения): " API_KEY
-
-if [ -n "$API_KEY" ]; then
-    echo "LLM_API_KEY: '$API_KEY'" >> "$TEMP_DIR/yandex-cloud-config.yaml"
-    echo "✅ API ключ добавлен в конфигурацию"
+# ---------------------------------------------------------------------------
+# Читаем .env (только если файл есть)
+# ---------------------------------------------------------------------------
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+  echo "✅  Переменные загружены из backend/.env"
 else
-    echo "⚠️  API ключ не добавлен. Установите переменную окружения LLM_API_KEY в консоли Yandex Cloud."
+  echo "⚠️   backend/.env не найден — используем переменные окружения"
 fi
 
-# Деплой
-echo "🚀 Деплой функции $FUNCTION_NAME..."
-yc serverless function create --name "$FUNCTION_NAME" 2>/dev/null || echo "Функция уже существует, обновляем..."
+# ---------------------------------------------------------------------------
+# Валидация обязательных переменных
+# ---------------------------------------------------------------------------
+: "${LLM_API_KEY:?Задайте LLM_API_KEY в backend/.env или переменных окружения}"
+: "${SECRET_KEY:?Задайте SECRET_KEY в backend/.env (openssl rand -hex 32)}"
+
+LLM_PROVIDER="${LLM_PROVIDER:-openai_compatible}"
+LLM_MODEL="${LLM_MODEL:-yandexgpt-5-lite}"
+LLM_BASE_URL="${LLM_BASE_URL:-https://llm.api.cloud.yandex.net/v1}"
+LLM_TIMEOUT_SECONDS="${LLM_TIMEOUT_SECONDS:-120}"
+LLM_MAX_INPUT_CHARS="${LLM_MAX_INPUT_CHARS:-2500}"
+LLM_TEMPERATURE="${LLM_TEMPERATURE:-0.35}"
+LLM_NUM_PREDICT="${LLM_NUM_PREDICT:-3000}"
+ENABLE_LLM_REPAIR="${ENABLE_LLM_REPAIR:-true}"
+YANDEX_FOLDER_ID="${YANDEX_FOLDER_ID:-$YC_FOLDER_ID}"
+
+# Для YandexGPT нужен правильный base URL (не foundationModels)
+if [[ "$LLM_BASE_URL" == *"foundationModels"* ]]; then
+  echo "⚠️   Исправляю LLM_BASE_URL: foundationModels/v1 → /v1"
+  LLM_BASE_URL="https://llm.api.cloud.yandex.net/v1"
+fi
+
+# Для YandexGPT заменяем полный URI на короткое имя модели
+if [[ "$LLM_MODEL" == gpt://* ]]; then
+  LLM_MODEL=$(echo "$LLM_MODEL" | sed 's|gpt://[^/]*/\([^/]*\).*|\1|')
+  echo "⚠️   Преобразую модель URI → короткое имя: $LLM_MODEL"
+fi
+
+# ---------------------------------------------------------------------------
+# Подготовка исходников (без .env и кеша)
+# ---------------------------------------------------------------------------
+echo ""
+echo "📦  Подготовка исходников..."
+rm -rf "$TMP_SRC"
+cp -r "$SCRIPT_DIR/backend" "$TMP_SRC"
+rm -f "$TMP_SRC/.env" "$TMP_SRC/.env.*"
+rm -rf "$TMP_SRC/__pycache__" "$TMP_SRC/data" "$TMP_SRC/.venv"
+find "$TMP_SRC" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+find "$TMP_SRC" -name "*.pyc" -delete 2>/dev/null || true
+
+# Use CF-specific requirements (no torch/chromadb/sentence-transformers)
+if [ -f "$SCRIPT_DIR/backend/requirements.cf.txt" ]; then
+  cp "$SCRIPT_DIR/backend/requirements.cf.txt" "$TMP_SRC/requirements.txt"
+  echo "   Using requirements.cf.txt (without heavy ML packages)"
+fi
+
+echo "   Файлы для деплоя:"
+ls "$TMP_SRC"
+
+# ---------------------------------------------------------------------------
+# Создаём функцию (если не существует)
+# ---------------------------------------------------------------------------
+echo ""
+echo "🔍  Проверяю функцию '$FUNCTION_NAME'..."
+if ! yc serverless function get --name="$FUNCTION_NAME" &>/dev/null; then
+  echo "   Функция не найдена, создаю..."
+  yc serverless function create --name="$FUNCTION_NAME"
+  echo "   ✅ Функция создана"
+else
+  echo "   ✅ Функция уже существует"
+fi
+
+# ---------------------------------------------------------------------------
+# Деплой версии
+# ---------------------------------------------------------------------------
+echo ""
+echo "🚀  Деплой версии функции..."
+
+ENV_ARGS=(
+  --environment "LLM_PROVIDER=$LLM_PROVIDER"
+  --environment "LLM_MODEL=$LLM_MODEL"
+  --environment "LLM_BASE_URL=$LLM_BASE_URL"
+  --environment "LLM_API_KEY=$LLM_API_KEY"
+  --environment "LLM_TIMEOUT_SECONDS=$LLM_TIMEOUT_SECONDS"
+  --environment "LLM_MAX_INPUT_CHARS=$LLM_MAX_INPUT_CHARS"
+  --environment "LLM_TEMPERATURE=$LLM_TEMPERATURE"
+  --environment "LLM_NUM_PREDICT=$LLM_NUM_PREDICT"
+  --environment "ENABLE_LLM_REPAIR=$ENABLE_LLM_REPAIR"
+  --environment "YANDEX_FOLDER_ID=$YANDEX_FOLDER_ID"
+  --environment "RUWIKI_SITE_BASE=https://ruwiki.ru"
+  --environment "RUWIKI_REST_API_BASE=https://ruwiki.ru/api/rest_v1"
+  --environment "SQLITE_PATH=/tmp/data/app.db"
+  --environment "CHROMA_PATH=/tmp/data/chroma"
+  --environment "ENABLE_VECTOR_CACHE=false"
+  --environment "SECRET_KEY=$SECRET_KEY"
+  --environment "FRONTEND_URL=${FRONTEND_URL:-https://functions.yandexcloud.net}"
+)
+
+# OAuth (добавляем только если заданы в .env)
+if [ -n "${VK_CLIENT_ID:-}" ];        then ENV_ARGS+=(--environment "VK_CLIENT_ID=$VK_CLIENT_ID"); fi
+if [ -n "${VK_CLIENT_SECRET:-}" ];    then ENV_ARGS+=(--environment "VK_CLIENT_SECRET=$VK_CLIENT_SECRET"); fi
+if [ -n "${YANDEX_CLIENT_ID:-}" ];    then ENV_ARGS+=(--environment "YANDEX_CLIENT_ID=$YANDEX_CLIENT_ID"); fi
+if [ -n "${YANDEX_CLIENT_SECRET:-}" ]; then ENV_ARGS+=(--environment "YANDEX_CLIENT_SECRET=$YANDEX_CLIENT_SECRET"); fi
 
 yc serverless function version create \
-    --function-name "$FUNCTION_NAME" \
-    --runtime python311 \
-    --entrypoint app.main.app \
-    --memory 256m \
-    --execution-timeout 30s \
-    --source-path "$TEMP_DIR" \
-    --environment-from-file "$TEMP_DIR/yandex-cloud-config.yaml"
+  --function-name="$FUNCTION_NAME" \
+  --runtime="python311" \
+  --entrypoint="app.main.app" \
+  --memory="512m" \
+  --execution-timeout="120s" \
+  --source-path="$TMP_SRC" \
+  "${ENV_ARGS[@]}"
 
-# Получаем URL функции
-FUNCTION_URL=$(yc serverless function get --name "$FUNCTION_NAME" --format json | jq -r '.http_invoke_url' 2>/dev/null || echo "")
+# ---------------------------------------------------------------------------
+# Делаем функцию публичной
+# ---------------------------------------------------------------------------
+echo ""
+echo "🌐  Открываю публичный доступ..."
+yc serverless function allow-unauthenticated-invoke --name="$FUNCTION_NAME"
 
-if [ -n "$FUNCTION_URL" ]; then
-    echo "✅ Деплой завершен!"
-    echo "🌐 URL функции: $FUNCTION_URL"
-    echo ""
-    echo "📝 Обновите frontend/app.js:"
-    echo "function getDefaultBackendUrl() {"
-    echo "  return \"$FUNCTION_URL\";"
-    echo "}"
-else
-    echo "✅ Деплой завершен!"
-    echo "🌐 Получите URL функции:"
-    echo "yc serverless function get --name $FUNCTION_NAME"
-fi
+# ---------------------------------------------------------------------------
+# Итог
+# ---------------------------------------------------------------------------
+FUNCTION_ID=$(yc serverless function get --name="$FUNCTION_NAME" --format=json | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+FUNCTION_URL="https://functions.yandexcloud.net/$FUNCTION_ID"
+
+echo ""
+echo "════════════════════════════════════════════════"
+echo "✅  Деплой завершён!"
+echo "🌐  URL: $FUNCTION_URL"
+echo ""
+echo "📝  Проверка:"
+echo "    curl $FUNCTION_URL/health"
+echo ""
+echo "📝  Если используете OAuth, обновите FRONTEND_URL в backend/.env:"
+echo "    FRONTEND_URL=$FUNCTION_URL"
+echo "════════════════════════════════════════════════"
 
 # Очистка
-rm -rf "$TEMP_DIR"
-echo "🧹 Временные файлы удалены"
+rm -rf "$TMP_SRC"

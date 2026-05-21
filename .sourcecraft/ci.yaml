@@ -41,6 +41,7 @@ workflows:
                 fi
               - mkdir -p /tmp/fn-src
               - cp -r "$SOURCE_PATH"/. /tmp/fn-src/
+              - cp /tmp/fn-src/requirements.cf.txt /tmp/fn-src/requirements.txt
               - |
                 yc serverless function version create \
                   --function-name="$YC_FUNCTION_NAME" \

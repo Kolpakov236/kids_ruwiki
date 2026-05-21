@@ -3,9 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 
-import chromadb
-from chromadb.utils import embedding_functions
-
 from app.services.db import init_db, tx, now_ms
 from app.settings import settings
 
@@ -202,11 +199,13 @@ def save_rating(history_key: str, stars: int, comment: str = "") -> None:
         )
 
 
-def _chroma_client() -> chromadb.PersistentClient:
+def _chroma_client():
+    import chromadb  # lazy: only needed when enable_vector_cache=true
     return chromadb.PersistentClient(path=settings.chroma_path)
 
 
 def _embed_fn():
+    from chromadb.utils import embedding_functions  # lazy
     return embedding_functions.SentenceTransformerEmbeddingFunction(model_name=settings.embedding_model)
 
 
