@@ -70,12 +70,19 @@ if FRONTEND_DIR.exists() and not _in_cloud_functions:
 
 def handler(event, context):
     """Yandex Cloud Functions entry point — wraps FastAPI via httpx.ASGITransport."""
+    import asyncio
     import json as _json
     import httpx
 
-    # Direct ping — returns raw event without going through ASGI (for debugging)
-    raw_path = event.get("path", "")
-    if raw_path in ("/ping", "ping"):
+    # event["path"] = route template ("/{path+}"), real URL is in event["url"]
+    raw_url = event.get("url") or "/"
+    if not raw_url.startswith("/"):
+        raw_url = "/" + raw_url
+    if raw_url.endswith("?"):
+        raw_url = raw_url[:-1]
+
+    path_only = raw_url.split("?")[0]
+    if path_only in ("/ping", "/debug-event"):
         return {
             "statusCode": 200,
             "headers": {"content-type": "application/json"},
@@ -86,22 +93,25 @@ def handler(event, context):
     init_db()
 
     method = event.get("httpMethod", "GET")
-    path = raw_path or "/"
-    if not path.startswith("/"):
-        path = "/" + path
-    qs = event.get("queryStringParameters") or {}
     raw_headers = event.get("headers") or {}
     body_raw = event.get("body") or ""
     is_b64 = event.get("isBase64Encoded", False)
 
     body_bytes = base64.b64decode(body_raw) if is_b64 else body_raw.encode()
 
-    transport = httpx.ASGITransport(app=app)
-    with httpx.Client(transport=transport, base_url="http://yc.local") as client:
-        qs_str = "&".join(f"{k}={v}" for k, v in qs.items())
-        url = path + ("?" + qs_str if qs_str else "")
-        req_headers = {k: v for k, v in raw_headers.items()}
-        response = client.request(method.upper(), url, headers=req_headers, content=body_bytes)
+    url = raw_url
+    req_headers = {k: v for k, v in raw_headers.items()}
+
+    async def _call():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://yc.local") as client:
+            return await client.request(method.upper(), url, headers=req_headers, content=body_bytes)
+
+    loop = asyncio.new_event_loop()
+    try:
+        response = loop.run_until_complete(_call())
+    finally:
+        loop.close()
 
     resp_headers = dict(response.headers)
     content_type = resp_headers.get("content-type", "")

@@ -70,38 +70,56 @@
       </div>
     </div>
 
+    <!-- ─── Sidebar backdrop (mobile) ──────────────────────────────────── -->
+    <div id="sidebarBackdrop" class="sidebarBackdrop hidden"></div>
+
     <!-- ─── App Layout ────────────────────────────────────────────────────── -->
     <div class="appLayout">
 
       <!-- Sidebar -->
       <aside class="sidebar" id="sidebar">
-        <div class="sidebarBrand">
-          <span class="brandMark">Р</span>
-          <span>Ruwiki</span>
+
+        <!-- User area (profile / login) -->
+        <div class="sidebarUserArea">
+          <div id="userWidget" class="userWidget">
+            <button class="loginBtn" id="loginBtn" type="button">Войти</button>
+          </div>
         </div>
 
-        <nav class="sidebarNav">
-          <button class="navItem active" data-panel="chat" title="ИИ Ассистент">
-            <span class="navIcon">🤖</span>
-            <span class="navLabel">ИИ Ассистент</span>
-          </button>
-          <button class="navItem" data-panel="chats" title="Мои чаты">
-            <span class="navIcon">💬</span>
-            <span class="navLabel">Мои чаты</span>
-          </button>
-          <button class="navItem" data-panel="info" title="Информация">
-            <span class="navIcon">ℹ️</span>
-            <span class="navLabel">Информация</span>
-          </button>
-        </nav>
-
-        <button class="newChatBtn" id="newChatBtn" title="Новый чат">
-          <span class="navIcon">✏️</span>
-          <span class="navLabel">Новый чат</span>
-        </button>
-
+        <!-- Chat history -->
         <div class="sidebarChatsList" id="sidebarChatsList">
           <p class="sidebarChatsEmpty">Войдите, чтобы сохранять историю</p>
+        </div>
+
+        <!-- New chat -->
+        <div class="sidebarNewChatSection">
+          <button class="newChatBtn" id="newChatBtn">
+            <span>＋</span>
+            <span class="navLabel">Начать новый чат</span>
+          </button>
+        </div>
+
+        <!-- Hidden nav items — kept for JS switchPanel compatibility -->
+        <div style="display:none" aria-hidden="true">
+          <button class="navItem active" data-panel="chat"></button>
+          <button class="navItem" data-panel="chats"></button>
+          <button class="navItem" data-panel="info"></button>
+        </div>
+
+        <!-- Footer links -->
+        <div class="sidebarFooter">
+          <button class="sidebarFooterItem" id="deleteAllChatsBtn">
+            <span class="footerItemIcon">🗑</span>
+            <span class="navLabel">Удалить всю историю</span>
+          </button>
+<button class="sidebarFooterItem" id="openAboutBtn">
+            <span class="footerItemIcon">↗</span>
+            <span class="navLabel">О сервисе</span>
+          </button>
+          <button class="sidebarFooterItem danger" id="sidebarLogoutBtn">
+            <span class="footerItemIcon">⏻</span>
+            <span class="navLabel">Выйти</span>
+          </button>
         </div>
       </aside>
 
@@ -113,6 +131,7 @@
           <button class="sidebarToggleBtn" id="sidebarToggle" aria-label="Меню">☰</button>
 
           <div class="topbarRight">
+            <div id="localModeIndicator" class="localModeBadge hidden" title="Используется локальный сервер (localhost:8000)">🔧 Local</div>
             <div class="modelSelector" id="modelSelectorWrap">
               <button class="modelBtn" id="modelBtn" title="Выбрать модель">
                 <span id="modelBtnLabel">⚡ Быстрый</span>
@@ -123,27 +142,46 @@
                 <button class="modelOption" data-metrics="true" data-model-id="">✨ Качественный<span class="modelOptionSub">с проверкой фактов</span></button>
               </div>
             </div>
-
-            <div id="userWidget" class="userWidget">
-              <button class="loginBtn" id="loginBtn" type="button">Войти</button>
-            </div>
           </div>
         </header>
 
         <!-- Chat panel -->
         <div class="panel" id="panelChat">
 
-          <!-- Welcome screen (shown when no messages) -->
+          <!-- Welcome screen -->
           <div class="welcomeScreen" id="welcomeScreen">
             <div class="welcomeInner">
-              <div class="welcomeEmoji">📚</div>
-              <h1 class="welcomeTitle">Что хотите узнать сегодня?</h1>
-              <p class="welcomeSub">Объясним любую тему простыми словами — с аналогиями, примерами и мини-викториной</p>
+              <h1 class="welcomeTitle">Понятная&nbsp;энциклопедия</h1>
+              <p class="welcomeSub">Задай вопрос — нейросеть объяснит всё простыми словами</p>
+
               <div class="welcomeExamples" id="welcomeExamples">
-                <button class="exampleChip" data-query="Квантовая механика">⚛️ Квантовая механика</button>
-                <button class="exampleChip" data-query="Фотосинтез">🌿 Фотосинтез</button>
-                <button class="exampleChip" data-query="Чёрная дыра">🌌 Чёрная дыра</button>
-                <button class="exampleChip" data-query="Иммунная система">🛡️ Иммунная система</button>
+                <p class="welcomeExamplesLabel">Что спрашивают чаще всего</p>
+                <div class="welcomeChipsRow">
+                  <button class="exampleChip" data-query="Древний Египет">Древний Египет</button>
+                  <button class="exampleChip" data-query="Что такое чёрная дыра">Что такое чёрная дыра?</button>
+                  <button class="exampleChip" data-query="Что такое гравитация">Что такое гравитация?</button>
+                  <button class="exampleChip" data-query="Куда исчезли динозавры">Куда исчезли динозавры?</button>
+                  <button class="exampleChip" data-query="Что такое дробь">Что такое дробь?</button>
+                  <button class="exampleChip" data-query="Большой взрыв">Большой взрыв</button>
+                </div>
+              </div>
+
+              <div class="welcomeFeatures">
+                <div class="featureCard">
+                  <div class="featureCardIcon">🤖</div>
+                  <div class="featureCardTitle">AI-ассистент</div>
+                  <div class="featureCardSub">Объяснение даже самых сложных тем</div>
+                </div>
+                <div class="featureCard">
+                  <div class="featureCardIcon">🔗</div>
+                  <div class="featureCardTitle">Источники</div>
+                  <div class="featureCardSub">Ссылки на статьи Ruwiki для углублённого изучения</div>
+                </div>
+                <div class="featureCard">
+                  <div class="featureCardIcon">📈</div>
+                  <div class="featureCardTitle">Быстрое изучение</div>
+                  <div class="featureCardSub">Формат обучения, который тебе понравится</div>
+                </div>
               </div>
             </div>
           </div>
@@ -181,9 +219,8 @@
           </div>
         </div>
 
-        <!-- Input area (always visible) -->
+        <!-- Input area -->
         <div class="inputArea">
-          <!-- Bubble pop game (shown while loading) -->
           <div id="miniGame" class="miniGame hidden" aria-hidden="true">
             <canvas id="gameCanvas"></canvas>
             <div class="miniGameHud">
@@ -192,7 +229,6 @@
             </div>
           </div>
 
-          <!-- Progress steps -->
           <div id="progress" class="progress hidden">
             <span>Ищу статью</span>
             <span>Анализирую</span>
@@ -207,7 +243,7 @@
               id="query"
               maxlength="100"
               rows="1"
-              placeholder="Спросите что угодно… например: электричество, динозавры, чёрные дыры"
+              placeholder="Напиши, что хочешь узнать…"
             ></textarea>
             <button id="micBtn" class="iconBtn" type="button" title="Голосовой ввод" aria-label="Голосовой ввод">🎤</button>
             <button id="submitBtn" class="sendBtn" type="button" aria-label="Отправить">

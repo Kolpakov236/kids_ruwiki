@@ -42,3 +42,11 @@ backend/data/
 *.sqlite
 *.sqlite3
 
+# Secrets / service account keys
+key.json
+*.key.json
+service-account*.json
+
+# Claude Code
+.claude/
+

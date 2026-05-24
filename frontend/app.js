@@ -3,10 +3,32 @@
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const BACKEND_URL = window.location.protocol === "file:"
-  ? "http://127.0.0.1:8000"                                           // local dev
-  : "https://d5dg7k4qpk1aie7v9401.nkhmighe.apigw.yandexcloud.net";  // cloud
+const REMOTE_BACKEND_URL = "https://d5dg7k4qpk1aie7v9401.nkhmighe.apigw.yandexcloud.net";
+const LOCAL_BACKEND_URL  = "http://127.0.0.1:8000";
 const RUWIKI_BASE = "https://ruwiki.ru/wiki/";
+
+// Mutable — resolved by detectBackend() before first request
+let BACKEND_URL   = REMOTE_BACKEND_URL;
+let IS_LOCAL_MODE = false;
+
+async function detectBackend() {
+  try {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 1200);
+    const res = await fetch(LOCAL_BACKEND_URL + "/health", {
+      method: "GET",
+      signal: ctrl.signal,
+      cache: "no-store",
+    });
+    clearTimeout(tid);
+    if (res.ok) {
+      BACKEND_URL   = LOCAL_BACKEND_URL;
+      IS_LOCAL_MODE = true;
+    }
+  } catch (_) {
+    // local not reachable — stay on remote
+  }
+}
 
 const LOADING_TIPS = [
   "Ищем статью в Рувики...",
@@ -28,6 +50,8 @@ const state = {
   enableMetrics: false,
   selectedModelId: "",
   recognition: null,
+  micPhase: "idle",        // "idle" | "listening" | "paused"
+  micAccumulated: "",      // text saved across recognition sessions
   statusTimer: null,
   progressTimer: null,
   game: null,
@@ -124,7 +148,7 @@ class BubblePop {
     this.animId = requestAnimationFrame(() => this._loop());
   }
   _update() {
-    const W = this.canvas.width, H = this.canvas.height;
+    const W = this.canvas.width;
     this.spawnTimer++;
     if (this.spawnTimer >= 70) { this._spawn(false); this.spawnTimer = 0; }
     this.bubbles = this.bubbles.filter(b => {
@@ -349,9 +373,97 @@ function addAssistantMessage(data) {
   scrollMessages();
 }
 
+function _isGibberish(text) {
+  const s = text.toLowerCase().replace(/\s+/g, "");
+  // Only judge Cyrillic-heavy strings (latin queries like "DNA" are fine)
+  const cyr = (s.match(/[а-яё]/g) || []).length;
+  if (cyr < 4 || cyr < s.length * 0.65) return false;
+  const vowels = (s.match(/[аеёийоуыэюя]/g) || []).length;
+  // Vowel ratio < 12% is impossible in real Russian text (normal: ~40%)
+  if (vowels / cyr < 0.12) return true;
+  // Impossible consonant cluster of 5+ characters in a row
+  if (/[бвгджзклмнпрстфхцчшщ]{5,}/.test(s)) return true;
+  return false;
+}
+
+function _isNotFoundError(detail) {
+  const d = String(detail).toLowerCase();
+  return (
+    d.includes("no_relevant_article") ||
+    d.includes("article_not_found") ||
+    d.includes("article_too_short") ||
+    d.includes("mw_search_no_results") ||
+    (d.includes("ruwiki_fetch_failed") && d.includes("not_found"))
+  );
+}
+
+function addGibberishMessage() {
+  const $el = $("<div>").addClass("msgAssistant pop-in msgNotFound");
+  $el.attr("id", `msg_${Date.now()}`);
+
+  const $header = $("<div>").addClass("msgMainIdea msgNotFoundHeader");
+  $("<div>").addClass("msgMainIdeaLabel").text("Не понял запрос").appendTo($header);
+  $("<div>").addClass("msgMainIdeaText")
+    .text("Похоже, это не настоящее слово — попробуй сформулировать иначе")
+    .appendTo($header);
+  $el.append($header);
+
+  const $body = $("<div>").addClass("msgBody");
+  const $sec = $("<div>").addClass("msgSection");
+  $("<div>").addClass("msgSectionTitle").text("💡 Например, можно спросить").appendTo($sec);
+  const $ul = $("<ul>").css({ paddingLeft: "18px", color: "var(--text2)", lineHeight: "1.8" });
+  ["Что такое чёрная дыра?", "Как работает двигатель?", "Древний Египет"].forEach(l =>
+    $("<li>").text(l).appendTo($ul));
+  $sec.append($ul);
+  $body.append($sec);
+  $el.append($body);
+
+  $("#messages").append($el);
+  switchPanel("chat");
+  scrollMessages();
+}
+
+function addNotFoundMessage(query) {
+  const $el = $("<div>").addClass("msgAssistant pop-in msgNotFound");
+  $el.attr("id", `msg_${Date.now()}`);
+
+  const $header = $("<div>").addClass("msgMainIdea msgNotFoundHeader");
+  $("<div>").addClass("msgMainIdeaLabel").text("Статья не найдена").appendTo($header);
+  $("<div>").addClass("msgMainIdeaText")
+    .text(`По запросу «${query}» подходящей статьи в энциклопедии не нашлось`)
+    .appendTo($header);
+  $el.append($header);
+
+  const stripped = query
+    .replace(/^(что такое|как работает|как устроен[аоы]?|почему|зачем|расскажи про|расскажи о|объясни|кто такой|кто такая)\s+/i, "")
+    .replace(/[?!.…]+$/, "").trim();
+  const suggestion = stripped || query;
+
+  const $body = $("<div>").addClass("msgBody");
+  const $sec = $("<div>").addClass("msgSection");
+  $("<div>").addClass("msgSectionTitle").text("💡 Попробуй переформулировать").appendTo($sec);
+  const lines = [
+    `Используй ключевое слово: «${suggestion}»`,
+    "Напиши тему как в учебнике, без вопросов",
+    "Проверь орфографию",
+  ];
+  const $ul = $("<ul>").css({ paddingLeft: "18px", color: "var(--text2)", lineHeight: "1.8" });
+  lines.forEach(l => $("<li>").text(l).appendTo($ul));
+  $sec.append($ul);
+  $body.append($sec);
+  $el.append($body);
+
+  $("#messages").append($el);
+  switchPanel("chat");
+  scrollMessages();
+}
+
 function scrollMessages() {
   const panel = document.getElementById("panelChat");
-  requestAnimationFrame(() => panel.scrollTo({ top: panel.scrollHeight, behavior: "smooth" }));
+  // Double rAF: first frame updates DOM layout, second frame reads correct scrollHeight
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    panel.scrollTo({ top: panel.scrollHeight, behavior: "smooth" });
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -468,6 +580,12 @@ async function doSimplify() {
   addUserMessage(query);
   $("#query").val("").css("height", "");
   $("#welcomeScreen").addClass("hidden");
+
+  if (_isGibberish(query)) {
+    addGibberishMessage();
+    return;
+  }
+
   setBusy(true, "Ищу статью в Рувики...");
 
   const body = {
@@ -485,9 +603,21 @@ async function doSimplify() {
       body: JSON.stringify(body),
     }, 180000);
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || `Ошибка сервера ${res.status}`);
+    if (!res.ok) {
+      const detail = data.detail || "";
+      setBusy(false);
+      if (res.status === 400) {
+        // 400 means backend couldn't find or process the article — always show friendly bubble
+        addNotFoundMessage(query);
+      } else {
+        setStatus(`Ошибка ${res.status}: ${detail || "сервер недоступен"}`);
+        setTimeout(() => setStatus(""), 6000);
+      }
+      return;
+    }
     setBusy(false, data.cached ? "Готово: ответ из кэша." : "Готово!");
     setTimeout(()=>setStatus(""),3000);
+    switchPanel("chat");
     addAssistantMessage(data);
     if (state.user) loadSidebarChats();
   } catch(e) {
@@ -806,21 +936,100 @@ function switchPanel(name) {
 }
 
 // ---------------------------------------------------------------------------
-// Speech recognition
+// Speech recognition — with pause / resume
 // ---------------------------------------------------------------------------
+function _updateMicBtn() {
+  const $btn = $("#micBtn");
+  if (state.micPhase === "listening") {
+    $btn.html("⏸").removeClass("micPaused").addClass("micListening")
+        .prop("disabled", false).attr("title", "Пауза");
+  } else if (state.micPhase === "paused") {
+    $btn.html("▶").removeClass("micListening").addClass("micPaused")
+        .prop("disabled", false).attr("title", "Продолжить запись");
+  } else {
+    $btn.html("🎤").removeClass("micListening micPaused")
+        .prop("disabled", false).attr("title", "Голосовой ввод");
+  }
+}
+
+function _micStop() {
+  try { state.recognition.stop(); } catch(_) {}
+}
+
+function _micAbort() {
+  try { state.recognition.abort(); } catch(_) {}
+}
+
 function setupSpeech() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { $("#micBtn").prop("disabled",true).text("🚫"); return; }
-  state.recognition = new SR();
-  state.recognition.lang = "ru-RU";
-  state.recognition.interimResults = false;
-  state.recognition.onstart = ()=>{ setStatus("Слушаю..."); $("#micBtn").addClass("listening"); };
-  state.recognition.onresult = e=>{
-    $("#query").val(e.results[0][0].transcript);
-    setStatus("Распознано."); autoGrow($("#query")[0]);
-  };
-  state.recognition.onerror = ()=>setStatus("Не удалось распознать голос.");
-  state.recognition.onend = ()=>{ $("#micBtn").removeClass("listening").prop("disabled",false); };
+  if (!SR) { $("#micBtn").prop("disabled", true).html("🚫"); return; }
+
+  function createRecognition() {
+    const rec = new SR();
+    rec.lang = "ru-RU";
+    rec.interimResults = true;
+    rec.continuous = false;      // keep false for broadest browser compat
+
+    rec.onstart = () => {
+      setStatus("Слушаю… 🔴");
+      _updateMicBtn();
+    };
+
+    rec.onresult = (e) => {
+      let interimPart = "";
+      let finalPart = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          finalPart += e.results[i][0].transcript;
+        } else {
+          interimPart += e.results[i][0].transcript;
+        }
+      }
+      if (finalPart) {
+        state.micAccumulated = (state.micAccumulated + " " + finalPart).trim();
+      }
+      const display = (state.micAccumulated + (interimPart ? " " + interimPart : "")).trim();
+      $("#query").val(display);
+      autoGrow($("#query")[0]);
+    };
+
+    rec.onerror = (e) => {
+      // "aborted" fires when we call abort() intentionally — ignore it
+      if (e.error !== "aborted" && e.error !== "no-speech") {
+        setStatus("Не удалось распознать голос.");
+      }
+      if (e.error !== "aborted") {
+        state.micPhase = "idle";
+        state.micAccumulated = "";
+        _updateMicBtn();
+      }
+    };
+
+    rec.onend = () => {
+      if (state.micPhase === "listening") {
+        // Natural end (silence timeout) — auto-restart to continue recording
+        try {
+          state.recognition.start();
+        } catch (_) {
+          // Restart failed (e.g. page hidden) — gracefully stop
+          state.micPhase = "idle";
+          setStatus("Распознано.");
+          setTimeout(() => setStatus(""), 2000);
+          _updateMicBtn();
+        }
+      } else if (state.micPhase === "paused") {
+        setStatus("Запись на паузе — нажми ▶ чтобы продолжить");
+        _updateMicBtn();
+      } else {
+        setStatus("");
+        _updateMicBtn();
+      }
+    };
+
+    return rec;
+  }
+
+  state.recognition = createRecognition();
 }
 
 function autoGrow(el) {
@@ -832,6 +1041,9 @@ function autoGrow(el) {
 // Bootstrap
 // ---------------------------------------------------------------------------
 $(async function () {
+  // Resolve backend URL before any requests
+  await detectBackend();
+
   checkOAuthToken();
   await loadCurrentUser();
   renderUserWidget();
@@ -843,17 +1055,49 @@ $(async function () {
   checkHealth();
   setupSpeech();
 
-  // Submit
-  $("#submitBtn").on("click", doSimplify);
+  // Show local-mode indicator
+  if (IS_LOCAL_MODE) {
+    $("#localModeIndicator").removeClass("hidden");
+  }
+
+  // Submit — also reset mic if it was active
+  $("#submitBtn").on("click", () => {
+    if (state.micPhase !== "idle") {
+      state.micPhase = "idle";
+      state.micAccumulated = "";
+      _micAbort();
+      _updateMicBtn();
+    }
+    doSimplify();
+  });
   $("#query").on("keydown", e=>{
-    if (e.key==="Enter" && !e.shiftKey) { e.preventDefault(); doSimplify(); }
+    if (e.key==="Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (state.micPhase !== "idle") {
+        state.micPhase = "idle"; state.micAccumulated = ""; _micAbort(); _updateMicBtn();
+      }
+      doSimplify();
+    }
   }).on("input", function(){ autoGrow(this); });
 
-  // Mic
-  $("#micBtn").on("click", ()=>{
+  // Mic — idle → listening → paused → listening → …
+  $("#micBtn").on("click", () => {
     if (!state.recognition) return;
-    $("#micBtn").prop("disabled",true);
-    state.recognition.start();
+    if (state.micPhase === "idle") {
+      state.micAccumulated = "";
+      state.micPhase = "listening";
+      _updateMicBtn();
+      try { state.recognition.start(); } catch(_) {}
+    } else if (state.micPhase === "listening") {
+      // Pause: set phase first so onend knows not to restart
+      state.micPhase = "paused";
+      _micStop();
+    } else if (state.micPhase === "paused") {
+      // Resume: start a fresh session; results append to micAccumulated
+      state.micPhase = "listening";
+      _updateMicBtn();
+      try { state.recognition.start(); } catch(_) {}
+    }
   });
 
   // Example chips
@@ -870,13 +1114,28 @@ $(async function () {
   $("#newChatBtn").on("click", newChat);
 
   // Sidebar toggle
+  function closeMobileSidebar() {
+    $("#sidebar").removeClass("mobileOpen");
+    $("#sidebarBackdrop").addClass("hidden");
+  }
+
   $("#sidebarToggle").on("click", ()=>{
     const $s=$("#sidebar");
     if (window.innerWidth<=640) {
+      const opening = !$s.hasClass("mobileOpen");
       $s.toggleClass("mobileOpen");
+      $("#sidebarBackdrop").toggleClass("hidden", !opening);
     } else {
       $s.toggleClass("collapsed");
     }
+  });
+
+  // Tap backdrop to close sidebar
+  $("#sidebarBackdrop").on("click", closeMobileSidebar);
+
+  // Close sidebar on mobile after nav/new-chat click
+  $(".navItem, #newChatBtn").on("click", ()=>{
+    if (window.innerWidth<=640) closeMobileSidebar();
   });
 
   // Model selector
@@ -902,6 +1161,35 @@ $(async function () {
   // Quiz modal
   $("#quizModalClose").on("click", ()=>$("#quizModal").addClass("hidden"));
   $("#quizModal").on("click", e=>{ if(e.target===e.currentTarget) $("#quizModal").addClass("hidden"); });
+
+  // ── Sidebar footer buttons ──────────────────────────────────────────────
+  $("#sidebarLogoutBtn").on("click", ()=>{
+    doLogout();
+    if (window.innerWidth<=640) closeMobileSidebar();
+  });
+
+  $("#openAboutBtn").on("click", ()=>{
+    switchPanel("info");
+    if (window.innerWidth<=640) closeMobileSidebar();
+  });
+
+
+  $("#deleteAllChatsBtn").on("click", async ()=>{
+    if (!state.user) { openAuthModal(); return; }
+    if (!confirm("Удалить все чаты? Это действие необратимо.")) return;
+    try {
+      const res = await apiFetch("/chats", {}, 8000);
+      if (!res.ok) return;
+      const chats = await res.json();
+      await Promise.all(chats.map(c => apiFetch(`/chats/${c.id}`, { method:"DELETE" }, 5000)));
+      state.chatId = null;
+      $("#messages").empty();
+      $("#welcomeScreen").removeClass("hidden");
+      updateSidebarChats([]);
+      switchPanel("chat");
+    } catch {}
+    if (window.innerWidth<=640) closeMobileSidebar();
+  });
 
   // Escape closes modals
   $(document).on("keydown", e=>{

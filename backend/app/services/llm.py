@@ -495,6 +495,9 @@ async def _openai_compatible_chat(messages: list[dict[str, str]]) -> dict[str, A
         headers["x-folder-id" if is_yandex else "OpenAI-Project"] = settings.openai_project
 
     effective_model = _model_override.get() or settings.llm_model
+    # YandexGPT requires full URI: gpt://<folder_id>/<model>/latest
+    if is_yandex and not effective_model.startswith("gpt://") and settings.openai_project:
+        effective_model = f"gpt://{settings.openai_project}/{effective_model}/latest"
 
     payload: dict[str, Any] = {
         "model": effective_model,
