@@ -296,9 +296,13 @@ function addAssistantMessage(data) {
     $("<div>").addClass("msgSectionTitle").text("📖 Ключевые термины").appendTo($gSec);
     const $gBox = $("<div>").addClass("msgGlossary").appendTo($gSec);
     data.glossary.forEach(item => {
+      let def = item.definition || "";
+      // strip leading "Term — " or "Term: " if the LLM duplicated the term
+      const termPrefix = new RegExp("^" + item.term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*[-—–:]\\s*", "i");
+      def = def.replace(termPrefix, "");
       $("<div>").addClass("msgGlossaryItem")
         .append($("<span>").addClass("msgGlossaryTerm").text(item.term + " "))
-        .append(document.createTextNode("— " + (item.definition||"")))
+        .append(document.createTextNode("— " + def))
         .appendTo($gBox);
     });
     $body.append($gSec);
@@ -342,7 +346,14 @@ function addAssistantMessage(data) {
   }
 
   $("<button>").addClass("msgActionBtn").text("🔊 Озвучить")
-    .on("click", () => speak(data.simplified_text || "")).appendTo($actions);
+    .on("click", function() {
+      if ($(this).hasClass("speaking")) {
+        window.speechSynthesis.cancel();
+        $(this).removeClass("speaking").text("🔊 Озвучить");
+      } else {
+        speakWhenReady(data.simplified_text || "", $(this));
+      }
+    }).appendTo($actions);
 
   $("<button>").addClass("msgActionBtn").text("📋 Копировать")
     .on("click", () => copyText(data.main_idea, data.simplified_text)).appendTo($actions);
@@ -546,12 +557,30 @@ async function submitRating(historyKey, stars) {
 // ---------------------------------------------------------------------------
 // Speech
 // ---------------------------------------------------------------------------
-function speak(text) {
+function speak(text, $btn) {
   if (!text) return;
   window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
-  u.lang = "ru-RU"; u.rate = 0.92;
+  u.lang = "ru-RU";
+  u.rate = 0.92;
+  const voices = window.speechSynthesis.getVoices();
+  const ruVoice = voices.find(v => v.lang.startsWith("ru"));
+  if (ruVoice) u.voice = ruVoice;
+  if ($btn) {
+    $btn.addClass("speaking").text("⏹ Стоп");
+    u.onend = u.onerror = () => $btn.removeClass("speaking").text("🔊 Озвучить");
+  }
   window.speechSynthesis.speak(u);
+}
+
+function speakWhenReady(text, $btn) {
+  if (!text) return;
+  const voices = window.speechSynthesis.getVoices();
+  if (voices.length) {
+    speak(text, $btn);
+  } else {
+    window.speechSynthesis.addEventListener("voiceschanged", () => speak(text, $btn), { once: true });
+  }
 }
 
 async function copyText(mainIdea, text) {

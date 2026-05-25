@@ -644,6 +644,8 @@ body { background: var(--bg); color: var(--text); }
 .msgActionBtn:hover { background: rgba(255,255,255,0.08); color: var(--text); }
 .msgActionBtn.quizBtn { background: var(--purple); color: #fff; border-color: transparent; }
 .msgActionBtn.quizBtn:hover { background: var(--purple2); }
+.msgActionBtn.speaking { background: var(--accent, #4f8ef7); color: #fff; border-color: transparent; }
+.msgActionBtn.speaking:hover { filter: brightness(1.1); }
 
 .msgRating { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .msgRatingLabel { font-size: 0.78rem; color: var(--text3); font-weight: 600; }
