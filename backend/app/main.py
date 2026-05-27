@@ -14,7 +14,6 @@ from app.routes.chats import router as chats_router
 from app.routes.simplify import router as simplify_router
 from app.routes.tts import router as tts_router
 from app.services.db import init_db
-from app.services.silero_tts import download_model
 
 # YC Functions: code is always at /function/code/; locally: backend/app/ → ../../frontend
 _CF_FRONTEND = pathlib.Path("/function/code/frontend")
@@ -50,11 +49,6 @@ app.include_router(tts_router)
 @app.on_event("startup")
 def _startup() -> None:
     init_db()
-    try:
-        download_model()
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning("silero model pre-download failed: %s", e)
 
 
 @app.get("/debug/fs")
