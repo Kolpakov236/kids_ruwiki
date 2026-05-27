@@ -371,12 +371,7 @@ function addAssistantMessage(data) {
 
   $("<button>").addClass("msgActionBtn").text("🔊 Озвучить")
     .on("click", function() {
-      if ($(this).hasClass("speaking")) {
-        window.speechSynthesis.cancel();
-        $(this).removeClass("speaking").text("🔊 Озвучить");
-      } else {
-        speakWhenReady(data.simplified_text || "", $(this));
-      }
+      speakWhenReady(data.simplified_text || "", $(this));
     }).appendTo($actions);
 
   $("<button>").addClass("msgActionBtn").text("📋 Копировать")
@@ -579,51 +574,64 @@ async function submitRating(historyKey, stars) {
 }
 
 // ---------------------------------------------------------------------------
-// Speech
+// Speech — server-side neural TTS (edge-tts, ru-RU-SvetlanaNeural)
 // ---------------------------------------------------------------------------
-function _pickRuVoice(voices) {
-  const ru = voices.filter(v => v.lang.startsWith("ru"));
-  if (!ru.length) return null;
-  // Prefer by quality order: macOS premium > macOS standard > any local > any
-  const preferred = [
-    "Milena Premium", "Milena (Premium)", "Yuri Premium",
-    "Milena", "Yuri", "Katerina", "Svetlana",
-  ];
-  for (const name of preferred) {
-    const v = ru.find(v => v.name === name);
-    if (v) return v;
+let _ttsAudio = null;
+
+function _stopTts() {
+  if (_ttsAudio) {
+    _ttsAudio.pause();
+    _ttsAudio.src = "";
+    _ttsAudio = null;
   }
-  return ru.find(v => v.localService) || ru[0];
 }
 
-function speak(text, $btn) {
+async function speakWhenReady(text, $btn) {
   if (!text) return;
-  window.speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = "ru-RU";
-  u.rate = 0.87;
-  u.pitch = 1.0;
-  const v = _pickRuVoice(window.speechSynthesis.getVoices());
-  if (v) u.voice = v;
-  if ($btn) {
-    $btn.addClass("speaking").text("⏹ Стоп");
-    u.onend = u.onerror = () => $btn.removeClass("speaking").text("🔊 Озвучить");
-  }
-  window.speechSynthesis.speak(u);
-}
 
-function speakWhenReady(text, $btn) {
-  if (!text) return;
-  const trySpeak = () => {
-    const voices = window.speechSynthesis.getVoices();
-    // Wait until Russian voice is available (avoid falling back to wrong language)
-    if (voices.some(v => v.lang.startsWith("ru")) || voices.length > 3) {
-      speak(text, $btn);
-    } else {
-      window.speechSynthesis.addEventListener("voiceschanged", () => speak(text, $btn), { once: true });
+  // If already playing — stop
+  if ($btn && $btn.hasClass("speaking")) {
+    _stopTts();
+    $btn.removeClass("speaking").text("🔊 Озвучить");
+    return;
+  }
+
+  if ($btn) $btn.addClass("speaking").text("⏹ Стоп");
+
+  try {
+    const res = await fetch(BACKEND_URL + "/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, voice: "ru-RU-SvetlanaNeural", rate: "-5%" }),
+    });
+
+    if (!res.ok) throw new Error("tts_http_" + res.status);
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+
+    _stopTts();
+    _ttsAudio = new Audio(url);
+    _ttsAudio.onended = _ttsAudio.onerror = () => {
+      URL.revokeObjectURL(url);
+      _ttsAudio = null;
+      if ($btn) $btn.removeClass("speaking").text("🔊 Озвучить");
+    };
+    _ttsAudio.play();
+  } catch (e) {
+    console.warn("TTS failed, falling back to browser voice:", e);
+    if ($btn) $btn.removeClass("speaking").text("🔊 Озвучить");
+    // Graceful fallback to Web Speech API
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "ru-RU"; u.rate = 0.87;
+    const ruVoice = window.speechSynthesis.getVoices().find(v => v.lang.startsWith("ru") && v.localService);
+    if (ruVoice) u.voice = ruVoice;
+    if ($btn) {
+      $btn.addClass("speaking").text("⏹ Стоп");
+      u.onend = u.onerror = () => $btn.removeClass("speaking").text("🔊 Озвучить");
     }
-  };
-  trySpeak();
+    window.speechSynthesis.speak(u);
+  }
 }
 
 async function copyText(mainIdea, text) {

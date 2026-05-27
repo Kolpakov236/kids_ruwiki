@@ -13,3 +13,4 @@ rapidfuzz>=3.9
 PyJWT>=2.8
 aiofiles>=23.0
 psycopg2-binary>=2.9
+edge-tts>=7.0

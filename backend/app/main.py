@@ -12,6 +12,7 @@ from starlette.requests import Request
 from app.routes.auth import router as auth_router
 from app.routes.chats import router as chats_router
 from app.routes.simplify import router as simplify_router
+from app.routes.tts import router as tts_router
 from app.services.db import init_db
 
 # YC Functions: code is always at /function/code/; locally: backend/app/ → ../../frontend
@@ -42,6 +43,7 @@ app.add_middleware(PrivateNetworkAccessMiddleware)
 app.include_router(simplify_router)
 app.include_router(auth_router)
 app.include_router(chats_router)
+app.include_router(tts_router)
 
 
 @app.on_event("startup")
