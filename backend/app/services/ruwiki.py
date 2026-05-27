@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from urllib.parse import quote
@@ -10,7 +11,7 @@ from bs4 import BeautifulSoup
 from app.settings import settings
 
 # ---------------------------------------------------------------------------
-# Query pre-processing: strip question framing to get core concept
+# Query pre-processing
 # ---------------------------------------------------------------------------
 
 _QUESTION_RE = re.compile(
@@ -27,9 +28,31 @@ _QUESTION_RE = re.compile(
     re.IGNORECASE | re.UNICODE,
 )
 
+# Leading verb forms in "куда делись X", "как погибли X" — strip to get noun phrase
+_VERB_PREFIX_RE = re.compile(
+    r"^(?:"
+    r"делись|делся|делась|делись|"
+    r"появились|появился|появилась|появляются|появляется|"
+    r"исчезли|исчез|исчезла|исчезают|исчезает|"
+    r"погибли|погиб|погибла|гибнут|гибнет|"
+    r"вымерли|вымер|вымерла|вымирают|"
+    r"произошло|случилось|случился|случилась|случаются|"
+    r"устроен[аоы]?|работает|работают|"
+    r"образуется|образуются|возникает|возникают|"
+    r"называется|называются|выглядит|выглядят"
+    r")\s+",
+    re.IGNORECASE | re.UNICODE,
+)
+
+# Question-word prefixes not caught by _QUESTION_RE (standalone куда/когда/etc before verb)
+_LEADING_QW_RE = re.compile(
+    r"^(?:куда|когда|откуда|зачем|почему|сколько|какой|какая|какие|каким)\s+",
+    re.IGNORECASE | re.UNICODE,
+)
+
 
 def _extract_concept(query: str) -> str:
-    """Remove question framing to get the core encyclopaedic concept."""
+    """Remove question framing, return core encyclopaedic concept."""
     q = query.strip().rstrip("?!.…").strip()
     m = _QUESTION_RE.match(q)
     if m:
@@ -37,37 +60,130 @@ def _extract_concept(query: str) -> str:
     return q or query.strip()
 
 
+def _normalize_to_noun_phrase(text: str) -> str:
+    """Strip leading question words and verb forms to get the core noun phrase."""
+    t = _LEADING_QW_RE.sub("", text).strip()
+    t = _VERB_PREFIX_RE.sub("", t).strip()
+    return t
+
+
+def _extract_search_queries(query: str) -> list[str]:
+    """
+    Generate an ordered list of search queries (most to least specific).
+    Multiple variants improve recall when the primary query finds nothing.
+    """
+    concept = _extract_concept(query)
+    variants: list[str] = [concept]
+
+    # Try stripping leading question-words + verbs to get noun phrase
+    noun_phrase = _normalize_to_noun_phrase(concept)
+    if noun_phrase and noun_phrase.lower() != concept.lower():
+        variants.append(noun_phrase)
+
+    # For multi-word concepts, also try last 2 words (often the head noun)
+    words = (noun_phrase or concept).split()
+    if len(words) >= 3:
+        variants.append(" ".join(words[-2:]))
+    if len(words) >= 2:
+        last = words[-1]
+        if len(last) >= 4:
+            variants.append(last)
+
+    # De-duplicate, preserve order
+    seen: set[str] = set()
+    out: list[str] = []
+    for v in variants:
+        v = v.strip()
+        if v and v.lower() not in seen:
+            seen.add(v.lower())
+            out.append(v)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Relevance scoring
+# ---------------------------------------------------------------------------
+
+_DISAMBIGUATION_RE = re.compile(
+    r"может означать|может относиться|значения:|другие значения|"
+    r"статья — список|это\s+—\s+страница\s+значений",
+    re.IGNORECASE,
+)
+
+
 def _relevance_score(concept: str, article_title: str, article_text: str = "") -> float:
     """
-    0..1 estimate of how relevant an article is to the concept.
-    Uses title substring / word-prefix match; falls back to content check.
+    0..1 relevance of an article to the concept.
+    Combines title match, content coverage, and penalties for disambiguation pages.
     """
     c = concept.lower().strip()
     t = article_title.lower().strip()
 
-    if c in t or t in c:
+    # Exact match → maximum
+    if c == t:
         return 1.0
 
-    c_words = [w for w in re.findall(r"\w{4,}", c)]
-    t_words = [w for w in re.findall(r"\w{4,}", t)]
-    if c_words and t_words:
-        # Prefix-6 matching handles Russian inflection (e.g. «динозавры» ~ «динозавр»)
-        title_matched = sum(
-            1 for cw in c_words
-            if any(tw[:6] == cw[:6] for tw in t_words)
-        )
-        title_score = title_matched / len(c_words)
-        if title_score >= 0.5:
-            return title_score
+    # Substring containment
+    if c in t or t in c:
+        title_score = 0.95
+    else:
+        c_words = [w for w in re.findall(r"\w{4,}", c)]
+        t_words = [w for w in re.findall(r"\w{4,}", t)]
+        if c_words and t_words:
+            # Prefix-6 matching for Russian inflection
+            matched = sum(
+                1 for cw in c_words
+                if any(tw[:6] == cw[:6] for tw in t_words)
+            )
+            title_score = matched / len(c_words)
+        else:
+            title_score = 0.0
 
-    # Secondary check: does article text mention concept words?
-    if article_text and c_words:
-        text_sample = article_text[:3000].lower()
-        content_matched = sum(1 for cw in c_words if cw[:6] in text_sample)
-        return content_matched / len(c_words) * 0.6  # discounted
+    # Boost if title_score is already high
+    if title_score >= 0.5:
+        score = title_score
+    elif article_text:
+        # Content coverage: how many concept words appear in the text
+        c_words = [w for w in re.findall(r"\w{4,}", c)]
+        if c_words:
+            sample = article_text[:4000].lower()
+            text_matched = sum(1 for cw in c_words if cw[:6] in sample)
+            content_score = (text_matched / len(c_words)) * 0.55
+            score = max(title_score, content_score)
+        else:
+            score = title_score
+    else:
+        score = title_score
 
-    return 0.0
+    # Penalise disambiguation pages heavily
+    if article_text and _DISAMBIGUATION_RE.search(article_text[:600]):
+        score *= 0.35
 
+    # Slight bonus for longer articles (more content = more relevant)
+    if article_text and score > 0:
+        length_bonus = min(0.05, len(article_text) / 200_000)
+        score = min(1.0, score + length_bonus)
+
+    return round(score, 4)
+
+
+def _score_search_snippet(concept: str, title: str, snippet: str) -> float:
+    """Quick score from MW search snippet — used to rank titles before fetching."""
+    base = _relevance_score(concept, title)
+    if not snippet:
+        return base
+    c_words = [w for w in re.findall(r"\w{4,}", concept.lower())]
+    if not c_words:
+        return base
+    snip = re.sub(r"<[^>]+>", "", snippet).lower()
+    matched = sum(1 for cw in c_words if cw[:6] in snip)
+    snippet_bonus = (matched / len(c_words)) * 0.2
+    return min(1.0, base + snippet_bonus)
+
+
+# ---------------------------------------------------------------------------
+# Article dataclass
+# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class RuwikiArticle:
@@ -93,12 +209,10 @@ def _looks_like_html(text: str) -> bool:
 
 def _looks_like_error_page(html: str) -> bool:
     low = (html or "").lower()
-    # Ruwiki sometimes returns an HTML "error page" shell (often with token scripts)
     return ("<title>страница ошибки</title>" in low) or ("hmac-token-name" in low)
 
 
 def _mw_api_candidates() -> list[str]:
-    # Prefer configured base, but also try both common hosts.
     base = (settings.ruwiki_site_base or "https://ruwiki.ru").rstrip("/")
     include_ru_subdomain = "ru.ruwiki.ru" in base
     preferred = "https://ruwiki.ru"
@@ -108,7 +222,6 @@ def _mw_api_candidates() -> list[str]:
         candidates += [f"{b}/w/api.php", f"{b}/api.php"]
     if include_ru_subdomain:
         candidates += ["https://ru.ruwiki.ru/w/api.php", "https://ru.ruwiki.ru/api.php"]
-    # De-duplicate while preserving order
     seen = set()
     out = []
     for c in candidates:
@@ -139,71 +252,64 @@ def _wikipedia_api_candidates() -> list[str]:
     return ["https://ru.wikipedia.org/w/api.php"]
 
 
+# ---------------------------------------------------------------------------
+# Main fetch logic
+# ---------------------------------------------------------------------------
+
 async def fetch_article(query: str) -> RuwikiArticle:
     q = query.strip()
     if not q:
         raise ValueError("empty_query")
 
-    title = q.replace("_", " ")
-    concept = _extract_concept(q)  # core encyclopaedic term, e.g. «фотосинтез» from «Что такое фотосинтез?»
+    concept = _extract_concept(q)
+    search_queries = _extract_search_queries(q)   # [most_specific, ..., least_specific]
+    primary_concept = search_queries[0]            # used for relevance scoring
+    encoded = quote(primary_concept)
 
-    # Title candidates: prefer concept if it meaningfully differs from raw query
-    _seen_titles: set[str] = set()
-    titles_to_try: list[str] = []
-    for t in ([concept, title] if concept.lower() != title.lower() else [title]):
-        if t.lower() not in _seen_titles:
-            titles_to_try.append(t)
-            _seen_titles.add(t.lower())
-
-    encoded = quote(concept)
     async with httpx.AsyncClient(
-        # Keep article fetch fast; LLM has its own timeout later in the pipeline.
-        timeout=httpx.Timeout(8.0, connect=3.0, read=6.0),
+        timeout=httpx.Timeout(10.0, connect=3.0, read=8.0),
         follow_redirects=True,
         headers={
-            # Some hosts return an HTML anti-bot page unless the request looks like a browser.
             "User-Agent": "ruwiki-explain/0.1 (+https://github.com; educational; contact: local)",
             "Accept": "application/json,text/plain,*/*",
             "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.7,en;q=0.6",
         },
     ) as client:
-        params = {
+        base_params = {
             "action": "query",
             "format": "json",
             "prop": "extracts",
             "explaintext": "1",
             "redirects": "1",
-            "titles": title,
         }
 
         last_err: Exception | None = None
         attempts = 0
-        # A guard against accidental infinite loops, not a user-facing failure mode.
-        max_attempts = 32
-        had_network_error = False  # distinguishes "not found" from "connection failed"
+        max_attempts = 48
+        had_network_error = False
+        _seen_titles: set[str] = set()
 
         async def try_mw_extract(api_url: str, requested_title: str) -> RuwikiArticle | None:
             nonlocal last_err, attempts
             if attempts >= max_attempts:
                 return None
             attempts += 1
-            api = await client.get(api_url, params={**params, "titles": requested_title})
-            if api.status_code == 404:
-                last_err = httpx.HTTPStatusError("mw_api_404", request=api.request, response=api)
+            try:
+                api = await client.get(api_url, params={**base_params, "titles": requested_title})
+            except Exception as e:
+                last_err = e
                 return None
-            if api.status_code == 403:
-                last_err = httpx.HTTPStatusError("mw_api_403", request=api.request, response=api)
+            if api.status_code in {403, 404}:
+                last_err = httpx.HTTPStatusError(f"mw_api_{api.status_code}", request=api.request, response=api)
                 return None
             if 500 <= api.status_code <= 599:
                 last_err = httpx.HTTPStatusError("mw_api_5xx", request=api.request, response=api)
                 return None
-            api.raise_for_status()
             ct = (api.headers.get("content-type") or "").lower()
             body_text = api.text or ""
             if "application/json" not in ct or _looks_like_html(body_text):
                 last_err = ValueError("mw_api_non_json_response")
                 return None
-
             data = api.json()
             pages = data.get("query", {}).get("pages", {})
             for page in pages.values():
@@ -222,70 +328,115 @@ async def fetch_article(query: str) -> RuwikiArticle:
             last_err = ValueError("mw_api_empty_or_missing_extract")
             return None
 
-        async def mw_search_titles(api_url: str, search_query: str, limit: int = 3) -> list[str]:
-            """Return up to `limit` article titles matching search_query, best-first."""
+        async def mw_search(api_url: str, search_query: str, limit: int = 5) -> list[dict]:
+            """Return list of {title, snippet} dicts from MW search, best-first."""
             nonlocal last_err, attempts
             if attempts >= max_attempts:
                 return []
             attempts += 1
-            search = await client.get(
-                api_url,
-                params={
-                    "action": "query",
-                    "format": "json",
-                    "list": "search",
-                    "srsearch": search_query,
-                    "srlimit": str(limit),
-                },
-            )
-            if search.status_code in {403, 404} or 500 <= search.status_code <= 599:
-                last_err = httpx.HTTPStatusError("mw_search_failed", request=search.request, response=search)
+            try:
+                resp = await client.get(
+                    api_url,
+                    params={
+                        "action": "query",
+                        "format": "json",
+                        "list": "search",
+                        "srsearch": search_query,
+                        "srlimit": str(limit),
+                        "srprop": "snippet|titlesnippet",
+                    },
+                )
+            except Exception as e:
+                last_err = e
                 return []
-            search.raise_for_status()
-            ct = (search.headers.get("content-type") or "").lower()
-            if "application/json" not in ct or _looks_like_html(search.text or ""):
-                last_err = ValueError("mw_search_non_json_response")
+            if resp.status_code in {403, 404} or 500 <= resp.status_code <= 599:
+                last_err = httpx.HTTPStatusError("mw_search_failed", request=resp.request, response=resp)
                 return []
-            rows = search.json().get("query", {}).get("search", [])
+            ct = (resp.headers.get("content-type") or "").lower()
+            if "application/json" not in ct or _looks_like_html(resp.text or ""):
+                return []
+            rows = resp.json().get("query", {}).get("search", [])
             if not rows:
                 last_err = ValueError("mw_search_no_results")
                 return []
-            return [str(r.get("title") or "").strip() for r in rows if r.get("title")]
+            return [
+                {"title": str(r.get("title") or "").strip(), "snippet": str(r.get("snippet") or "")}
+                for r in rows if r.get("title")
+            ]
 
+        async def find_best_article(api_url: str) -> RuwikiArticle | None:
+            """Try direct lookups then ranked search; return the best-scoring article."""
+            best_article: RuwikiArticle | None = None
+            best_score: float = -1.0
+
+            # --- Phase 1: direct title lookups for all query variants ---
+            direct_tasks = [
+                try_mw_extract(api_url, sq)
+                for sq in search_queries
+                if sq.lower() not in _seen_titles
+            ]
+            for sq in search_queries:
+                _seen_titles.add(sq.lower())
+
+            direct_results = await asyncio.gather(*direct_tasks, return_exceptions=True)
+            for result in direct_results:
+                if isinstance(result, RuwikiArticle):
+                    score = _relevance_score(primary_concept, result.title, result.text)
+                    if score > best_score:
+                        best_score = score
+                        best_article = result
+
+            # If direct lookup got a very confident match, return immediately
+            if best_article and best_score >= 0.85:
+                return best_article
+
+            # --- Phase 2: search with all query variants in parallel ---
+            search_tasks = [
+                mw_search(api_url, sq, limit=5)
+                for sq in search_queries
+            ]
+            search_results_all = await asyncio.gather(*search_tasks, return_exceptions=True)
+
+            # Collect all candidates with pre-scores, de-duplicated
+            candidates: dict[str, float] = {}  # title → best_pre_score
+            for sq, results in zip(search_queries, search_results_all):
+                if isinstance(results, list):
+                    for item in results:
+                        title = item["title"]
+                        pre_score = _score_search_snippet(primary_concept, title, item["snippet"])
+                        if title.lower() not in _seen_titles:
+                            candidates[title] = max(candidates.get(title, 0.0), pre_score)
+
+            if not candidates and best_article:
+                return best_article  # nothing new from search
+
+            # Sort by pre-score descending, fetch top candidates
+            ranked = sorted(candidates.items(), key=lambda x: x[1], reverse=True)
+            fetch_tasks = []
+            fetch_titles = []
+            for title, _pre in ranked[:6]:
+                if title.lower() not in _seen_titles:
+                    _seen_titles.add(title.lower())
+                    fetch_tasks.append(try_mw_extract(api_url, title))
+                    fetch_titles.append(title)
+
+            if fetch_tasks:
+                fetched = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+                for result in fetched:
+                    if isinstance(result, RuwikiArticle):
+                        score = _relevance_score(primary_concept, result.title, result.text)
+                        if score > best_score:
+                            best_score = score
+                            best_article = result
+
+            return best_article
+
+        # Try each API endpoint until we get a good result
         for api_url in _mw_api_candidates() + _wikipedia_api_candidates():
             try:
-                # 1. Try direct title lookup for each candidate (concept first, then raw query)
-                best_article: RuwikiArticle | None = None
-                best_score: float = -1.0
-                for t in titles_to_try:
-                    article = await try_mw_extract(api_url, t)
-                    if article:
-                        score = _relevance_score(concept, article.title, article.text)
-                        if score > best_score:
-                            best_score = score
-                            best_article = article
-
-                if best_article and best_score >= 0.3:
-                    return best_article
-
-                # 2. Full-text search using extracted concept (top 3 candidates)
-                search_results = await mw_search_titles(api_url, concept, limit=3)
-                tried_lower = _seen_titles.copy()
-                for candidate in search_results:
-                    if candidate.lower() in tried_lower:
-                        continue
-                    tried_lower.add(candidate.lower())
-                    article = await try_mw_extract(api_url, candidate)
-                    if article:
-                        score = _relevance_score(concept, article.title, article.text)
-                        if score > best_score:
-                            best_score = score
-                            best_article = article
-
-                # Return best found so far (even if score is low — LLM can still use it)
-                if best_article:
-                    return best_article
-
+                article = await find_best_article(api_url)
+                if article:
+                    return article
             except (httpx.ConnectError, httpx.TimeoutException) as e:
                 had_network_error = True
                 last_err = e
@@ -294,7 +445,7 @@ async def fetch_article(query: str) -> RuwikiArticle:
                 last_err = e
                 continue
 
-        # Fallback: REST HTML endpoint (works when extracts are empty).
+        # Fallback: REST HTML endpoint
         configured_rest = (settings.ruwiki_rest_api_base or "https://ruwiki.ru/api/rest_v1").rstrip("/")
         rest_candidates = ["https://ruwiki.ru/api/rest_v1"]
         if configured_rest != rest_candidates[0]:
@@ -309,11 +460,8 @@ async def fetch_article(query: str) -> RuwikiArticle:
                 r = await client.get(url, headers={"Accept": "text/html,application/xhtml+xml,*/*"})
                 if r.status_code == 404:
                     raise ValueError("article_not_found")
-                if r.status_code == 403:
-                    last_err = httpx.HTTPStatusError("rest_api_403", request=r.request, response=r)
-                    continue
-                if 500 <= r.status_code <= 599:
-                    last_err = httpx.HTTPStatusError("rest_api_5xx", request=r.request, response=r)
+                if r.status_code in {403} or 500 <= r.status_code <= 599:
+                    last_err = httpx.HTTPStatusError(f"rest_api_{r.status_code}", request=r.request, response=r)
                     continue
                 r.raise_for_status()
                 candidate = r.text or ""
@@ -327,23 +475,16 @@ async def fetch_article(query: str) -> RuwikiArticle:
                 continue
 
         if not html:
-            # Last resort: fetch the normal wiki page HTML (often works even when APIs are blocked).
             for page_url in _site_page_candidates(encoded)[:2]:
                 try:
                     if attempts >= max_attempts:
                         break
                     attempts += 1
-                    r = await client.get(
-                        page_url,
-                        headers={"Accept": "text/html,application/xhtml+xml,*/*"},
-                    )
+                    r = await client.get(page_url, headers={"Accept": "text/html,application/xhtml+xml,*/*"})
                     if r.status_code == 404:
                         continue
-                    if r.status_code == 403:
-                        last_err = httpx.HTTPStatusError("page_403", request=r.request, response=r)
-                        continue
-                    if 500 <= r.status_code <= 599:
-                        last_err = httpx.HTTPStatusError("page_5xx", request=r.request, response=r)
+                    if r.status_code in {403} or 500 <= r.status_code <= 599:
+                        last_err = httpx.HTTPStatusError(f"page_{r.status_code}", request=r.request, response=r)
                         continue
                     r.raise_for_status()
                     candidate = r.text or ""
@@ -357,7 +498,6 @@ async def fetch_article(query: str) -> RuwikiArticle:
                     continue
 
         if not html:
-            # Distinguish "content genuinely not found" from "network/server error"
             _not_found_indicators = (
                 "mw_search_no_results", "mw_api_empty_or_missing_extract",
                 "article_not_found", "mw_api_404",
@@ -369,7 +509,7 @@ async def fetch_article(query: str) -> RuwikiArticle:
             )
             if is_not_found:
                 raise ValueError("no_relevant_article")
-            if isinstance(last_err, httpx.HTTPStatusError) and last_err.response is not None and last_err.request is not None:
+            if isinstance(last_err, httpx.HTTPStatusError) and last_err.response is not None:
                 code = last_err.response.status_code
                 url = str(last_err.request.url)
                 raise ValueError(f"ruwiki_fetch_failed:http_{code}:{url}")
@@ -383,6 +523,8 @@ async def fetch_article(query: str) -> RuwikiArticle:
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     if len(text) < 50:
         raise ValueError("no_relevant_article")
-
-    return RuwikiArticle(title=concept, url=f"{settings.ruwiki_site_base.rstrip('/')}/wiki/{encoded}", text=text)
-
+    return RuwikiArticle(
+        title=primary_concept,
+        url=f"{settings.ruwiki_site_base.rstrip('/')}/wiki/{encoded}",
+        text=text,
+    )
