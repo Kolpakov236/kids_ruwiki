@@ -577,40 +577,55 @@ async function submitRating(historyKey, stars) {
 // Speech — server-side neural TTS (edge-tts, ru-RU-SvetlanaNeural)
 // ---------------------------------------------------------------------------
 let _ttsAudio = null;
+let _ttsController = null;  // AbortController for in-flight fetch
+
+function _stripEmoji(text) {
+  return text
+    .replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 function _stopTts() {
-  if (_ttsAudio) {
-    _ttsAudio.pause();
-    _ttsAudio.src = "";
-    _ttsAudio = null;
-  }
+  if (_ttsController) { _ttsController.abort(); _ttsController = null; }
+  if (_ttsAudio) { _ttsAudio.pause(); _ttsAudio.src = ""; _ttsAudio = null; }
 }
 
 async function speakWhenReady(text, $btn) {
   if (!text) return;
 
-  // If already playing — stop
+  // Toggle: if already loading or playing — stop and return
   if ($btn && $btn.hasClass("speaking")) {
     _stopTts();
     $btn.removeClass("speaking").text("🔊 Озвучить");
     return;
   }
 
+  // Cancel any leftover request before starting a new one
+  _stopTts();
+
   if ($btn) $btn.addClass("speaking").text("⏹ Стоп");
+
+  const controller = new AbortController();
+  _ttsController = controller;
+  const cleanText = _stripEmoji(text);
 
   try {
     const res = await fetch(BACKEND_URL + "/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, voice: "ru-RU-SvetlanaNeural", rate: "-5%" }),
+      body: JSON.stringify({ text: cleanText, voice: "ru-RU-SvetlanaNeural", rate: "-5%" }),
+      signal: controller.signal,
     });
 
     if (!res.ok) throw new Error("tts_http_" + res.status);
-
     const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
 
-    _stopTts();
+    // Abort was called while fetch was in flight — do not play
+    if (_ttsController !== controller) return;
+
+    const url = URL.createObjectURL(blob);
+    _ttsController = null;
     _ttsAudio = new Audio(url);
     _ttsAudio.onended = _ttsAudio.onerror = () => {
       URL.revokeObjectURL(url);
@@ -618,11 +633,13 @@ async function speakWhenReady(text, $btn) {
       if ($btn) $btn.removeClass("speaking").text("🔊 Озвучить");
     };
     _ttsAudio.play();
+
   } catch (e) {
+    if (e.name === "AbortError") return;  // user pressed stop — button already reset
     console.warn("TTS failed, falling back to browser voice:", e);
     if ($btn) $btn.removeClass("speaking").text("🔊 Озвучить");
     // Graceful fallback to Web Speech API
-    const u = new SpeechSynthesisUtterance(text);
+    const u = new SpeechSynthesisUtterance(cleanText);
     u.lang = "ru-RU"; u.rate = 0.87;
     const ruVoice = window.speechSynthesis.getVoices().find(v => v.lang.startsWith("ru") && v.localService);
     if (ruVoice) u.voice = ruVoice;
