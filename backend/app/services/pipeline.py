@@ -36,6 +36,24 @@ from app.services.verifier import (
 
 logger = logging.getLogger(__name__)
 
+# Ranking/opinion queries — no single wiki article answers these; LLM general
+# knowledge gives far better results (specific names, achievements, records).
+_RANKING_QUERY_RE = re.compile(
+    r"^(?:кто|что|какой|какая|какое|какие)\s+"
+    r"(?:самый\s+|самая\s+|самое\s+|самые\s+)?"
+    r"(?:лучший|лучшая|лучшее|лучшие|"
+    r"величайший|величайшая|величайшее|величайшие|"
+    r"известный|известная|известное|известные|"
+    r"знаменитый|знаменитая|знаменитое|знаменитые|"
+    r"популярный|популярная|популярное|популярные|"
+    r"богатый|богатая|богатые|"
+    r"умный|умная|умные|"
+    r"быстрый|быстрая|быстрые|"
+    r"сильный|сильная|сильные|"
+    r"главный|главная|главное|главные)\b",
+    re.IGNORECASE | re.UNICODE,
+)
+
 _EMPTY_SUMMARY = SummarizationResult(
     condensed_text="", core_concept="", key_terms=[],
     key_dates=[], key_names=[], key_numbers=[], raw={},
@@ -363,6 +381,11 @@ async def simplify_pipeline(
         if resp:
             return resp
         cached_payload = None
+
+    # --- Ranking/opinion queries bypass wiki entirely ---
+    # "Кто лучший футболист в мире" has no single wiki article; LLM gives specific names+facts.
+    if _RANKING_QUERY_RE.match(query.strip()):
+        return await _llm_only_pipeline(query, age, age_group, mode, model_id, timings, t0)
 
     # --- Fetch article ---
     a0 = time.perf_counter()
