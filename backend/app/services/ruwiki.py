@@ -22,7 +22,7 @@ _QUESTION_RE = re.compile(
     r"почему\s+|зачем\s+|откуда берётся\s+|откуда берется\s+|откуда\s+|"
     r"из чего состоит\s+|из чего сделан[аоы]?\s+|"
     r"расскажи (?:мне )?(?:про |о |об )|объясни (?:мне )?(?:про |о |об |что такое )?|"
-    r"кто такой\s+|кто такая\s+|кто такие\s+|"
+    r"кто такой\s+|кто такая\s+|кто такие\s+|кто\s+|"
     r"чем является\s+"
     r")",
     re.IGNORECASE | re.UNICODE,
@@ -46,9 +46,17 @@ _VERB_PREFIX_RE = re.compile(
 
 # Question-word prefixes not caught by _QUESTION_RE (standalone куда/когда/etc before verb)
 _LEADING_QW_RE = re.compile(
-    r"^(?:куда|когда|откуда|зачем|почему|сколько|какой|какая|какие|каким)\s+",
+    r"^(?:куда|когда|откуда|зачем|почему|сколько|какой|какая|какие|каким|кто)\s+",
     re.IGNORECASE | re.UNICODE,
 )
+
+# Russian prepositions — used to strip trailing prepositional phrases in query variants
+_RU_PREPOSITIONS = frozenset({
+    "в", "на", "по", "из", "за", "без", "для", "до", "об",
+    "под", "над", "с", "к", "у", "о", "от", "при", "про", "через",
+    "между", "перед", "вокруг", "около", "после", "ради", "вместо",
+    "среди", "мимо", "вдоль", "против", "внутри",
+})
 
 
 def _extract_concept(query: str) -> str:
@@ -67,6 +75,17 @@ def _normalize_to_noun_phrase(text: str) -> str:
     return t
 
 
+def _strip_prep_tail(phrase: str) -> str:
+    """Remove trailing prepositional phrase, e.g. 'лучший футболист в мире' → 'лучший футболист'."""
+    words = phrase.split()
+    for i in range(len(words) - 1, 0, -1):
+        if words[i - 1].lower() in _RU_PREPOSITIONS:
+            trimmed = " ".join(words[:i - 1]).strip()
+            if trimmed:
+                return trimmed
+    return phrase
+
+
 def _extract_search_queries(query: str) -> list[str]:
     """
     Generate an ordered list of search queries (most to least specific).
@@ -75,19 +94,25 @@ def _extract_search_queries(query: str) -> list[str]:
     concept = _extract_concept(query)
     variants: list[str] = [concept]
 
-    # Try stripping leading question-words + verbs to get noun phrase
+    # Strip leading question-words + verb forms to get noun phrase
     noun_phrase = _normalize_to_noun_phrase(concept)
     if noun_phrase and noun_phrase.lower() != concept.lower():
         variants.append(noun_phrase)
 
-    # For multi-word concepts, also try last 2 words (often the head noun)
-    words = (noun_phrase or concept).split()
-    if len(words) >= 3:
-        variants.append(" ".join(words[-2:]))
-    if len(words) >= 2:
-        last = words[-1]
-        if len(last) >= 4:
-            variants.append(last)
+    base = noun_phrase or concept
+
+    # Strip trailing prepositional phrase ("в мире", "на земле", etc.)
+    stripped = _strip_prep_tail(base)
+    if stripped and stripped.lower() != base.lower():
+        variants.append(stripped)
+        base = stripped
+
+    # Last meaningful content word (skip prepositions and very short tokens)
+    content_words = [w for w in base.split() if w.lower() not in _RU_PREPOSITIONS and len(w) >= 4]
+    if content_words:
+        last_word = content_words[-1]
+        if last_word.lower() not in {v.lower() for v in variants}:
+            variants.append(last_word)
 
     # De-duplicate, preserve order
     seen: set[str] = set()
