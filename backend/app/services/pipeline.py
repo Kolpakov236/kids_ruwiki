@@ -428,6 +428,7 @@ async def simplify_pipeline(
             mode=mode,
             key_facts=key_facts,
             summary=summary if enable_metrics else None,
+            query=query,
         )
     except (LLMError, TimeoutError) as e:
         logger.warning("LLM simplify failed, using local fallback: %s", e)

@@ -307,10 +307,12 @@ function addAssistantMessage(data) {
       // strip leading "Term — " or "Term: " if the LLM duplicated the term
       const termPrefix = new RegExp("^" + item.term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*[-—–:]\\s*", "i");
       def = def.replace(termPrefix, "");
-      // lowercase first letter since it follows an em-dash
+      // lowercase first letter of definition since it follows an em-dash
       def = def.charAt(0).toLowerCase() + def.slice(1);
+      // capitalize first letter of the term
+      const term = item.term.charAt(0).toUpperCase() + item.term.slice(1);
       $("<div>").addClass("msgGlossaryItem")
-        .append($("<span>").addClass("msgGlossaryTerm").text(item.term + " "))
+        .append($("<span>").addClass("msgGlossaryTerm").text(term + " "))
         .append(document.createTextNode("— " + def))
         .appendTo($gBox);
     });
@@ -579,18 +581,30 @@ async function submitRating(historyKey, stars) {
 // ---------------------------------------------------------------------------
 // Speech
 // ---------------------------------------------------------------------------
+function _pickRuVoice(voices) {
+  const ru = voices.filter(v => v.lang.startsWith("ru"));
+  if (!ru.length) return null;
+  // Prefer by quality order: macOS premium > macOS standard > any local > any
+  const preferred = [
+    "Milena Premium", "Milena (Premium)", "Yuri Premium",
+    "Milena", "Yuri", "Katerina", "Svetlana",
+  ];
+  for (const name of preferred) {
+    const v = ru.find(v => v.name === name);
+    if (v) return v;
+  }
+  return ru.find(v => v.localService) || ru[0];
+}
+
 function speak(text, $btn) {
   if (!text) return;
   window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = "ru-RU";
-  u.rate = 0.88;
-  u.pitch = 1.05;
-  const voices = window.speechSynthesis.getVoices();
-  const ruVoices = voices.filter(v => v.lang.startsWith("ru"));
-  // Local/system voices (Milena, Siri) sound more natural than network voices
-  const ruVoice = ruVoices.find(v => v.localService) || ruVoices[0];
-  if (ruVoice) u.voice = ruVoice;
+  u.rate = 0.87;
+  u.pitch = 1.0;
+  const v = _pickRuVoice(window.speechSynthesis.getVoices());
+  if (v) u.voice = v;
   if ($btn) {
     $btn.addClass("speaking").text("⏹ Стоп");
     u.onend = u.onerror = () => $btn.removeClass("speaking").text("🔊 Озвучить");
@@ -600,12 +614,16 @@ function speak(text, $btn) {
 
 function speakWhenReady(text, $btn) {
   if (!text) return;
-  const voices = window.speechSynthesis.getVoices();
-  if (voices.length) {
-    speak(text, $btn);
-  } else {
-    window.speechSynthesis.addEventListener("voiceschanged", () => speak(text, $btn), { once: true });
-  }
+  const trySpeak = () => {
+    const voices = window.speechSynthesis.getVoices();
+    // Wait until Russian voice is available (avoid falling back to wrong language)
+    if (voices.some(v => v.lang.startsWith("ru")) || voices.length > 3) {
+      speak(text, $btn);
+    } else {
+      window.speechSynthesis.addEventListener("voiceschanged", () => speak(text, $btn), { once: true });
+    }
+  };
+  trySpeak();
 }
 
 async function copyText(mainIdea, text) {

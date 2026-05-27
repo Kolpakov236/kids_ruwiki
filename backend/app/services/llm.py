@@ -183,6 +183,7 @@ def _simplify_user_prompt(
     mode: str,
     key_facts: dict | None = None,
     summary: SummarizationResult | None = None,
+    query: str = "",
 ) -> str:
     facts = key_facts or {}
     required_terms = [str(x) for x in facts.get("required_terms") or []][:48]
@@ -260,18 +261,34 @@ def _simplify_user_prompt(
         "Разные аналогии — разные углы зрения на ту же идею."
     )
 
+    # Detect if the query asks about causes, extinction, disappearance — force theories
+    _theories_triggers = (
+        "куда", "почему", "зачем", "откуда", "вымер", "исчез", "погиб", "пропал",
+        "причин", "теори", "версий", "версия", "гипотез", "что случилось", "как погибли",
+        "как вымерли", "как исчезли",
+    )
+    query_lower = (query or "").lower()
+    theories_required = any(t in query_lower for t in _theories_triggers)
+
     theories_guide = (
         "theories — массив объектов {\"title\": \"...\", \"text\": \"...\"}. "
-        "Заполняй ТОЛЬКО если тема допускает несколько конкурирующих объяснений или версий "
-        "(например: вымирание динозавров, происхождение жизни, исчезновение цивилизаций, "
-        "природные катастрофы, исторические загадки). "
-        "Каждая теория: короткий заголовок + 1-3 предложения объяснения для ребёнка. "
-        "2-4 теории максимум. Если конкурирующих объяснений нет — верни пустой массив []."
+        + (
+            "ОБЯЗАТЕЛЬНО заполни: запрос пользователя касается причин, исчезновения или события — "
+            "добавь 2-4 основные версии/теории (например: падение астероида, вулканы, изменение климата и т.д.). "
+            if theories_required else
+            "Заполни если тема допускает несколько конкурирующих объяснений "
+            "(вымирание, катастрофы, исторические загадки, происхождение чего-либо). "
+        )
+        + "Каждая теория: короткий заголовок + 1-3 предложения для ребёнка. "
+        "Если конкурирующих объяснений нет — верни пустой массив []."
     )
+
+    query_line = f"ЗАПРОС ПОЛЬЗОВАТЕЛЯ: {query}\n\n" if query else ""
 
     return (
         f"{_age_instructions(age)}\n\n"
         f"{_mode_instructions(mode)}\n\n"
+        + query_line
         + fact_block
         + mechanism_hint
         + misconception_hint
@@ -781,6 +798,7 @@ async def simplify_with_llm(
     mode: str,
     key_facts: dict | None = None,
     summary: SummarizationResult | None = None,
+    query: str = "",
 ) -> LLMResult:
     """Step 2: Turn the structured summary into a clear, deep explanation for children."""
     input_text = original_text
@@ -793,7 +811,7 @@ async def simplify_with_llm(
             {"role": "system", "content": _system_prompt()},
             {
                 "role": "user",
-                "content": _simplify_user_prompt(text, age, mode, key_facts, summary),
+                "content": _simplify_user_prompt(text, age, mode, key_facts, summary, query),
             },
         ]
     )
