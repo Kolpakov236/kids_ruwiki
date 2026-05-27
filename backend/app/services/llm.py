@@ -37,6 +37,7 @@ class LLMResult:
     glossary: list[dict[str, str]]
     analogies: list[str]
     quiz: list[dict[str, str]]
+    theories: list[dict[str, str]]
     raw: dict[str, Any]
 
 
@@ -171,7 +172,8 @@ def _output_schema_text() -> str:
         '"learning_steps":["..."],'
         '"glossary":[{"term":"...","definition":"..."}],'
         '"analogies":["..."],'
-        '"quiz":[{"question":"...","answer":"..."}]}'
+        '"quiz":[{"question":"...","answer":"..."}],'
+        '"theories":[{"title":"...","text":"..."}]}'
     )
 
 
@@ -258,6 +260,15 @@ def _simplify_user_prompt(
         "Разные аналогии — разные углы зрения на ту же идею."
     )
 
+    theories_guide = (
+        "theories — массив объектов {\"title\": \"...\", \"text\": \"...\"}. "
+        "Заполняй ТОЛЬКО если тема допускает несколько конкурирующих объяснений или версий "
+        "(например: вымирание динозавров, происхождение жизни, исчезновение цивилизаций, "
+        "природные катастрофы, исторические загадки). "
+        "Каждая теория: короткий заголовок + 1-3 предложения объяснения для ребёнка. "
+        "2-4 теории максимум. Если конкурирующих объяснений нет — верни пустой массив []."
+    )
+
     return (
         f"{_age_instructions(age)}\n\n"
         f"{_mode_instructions(mode)}\n\n"
@@ -270,6 +281,7 @@ def _simplify_user_prompt(
         + quiz_guide + "\n"
         + glossary_guide + "\n"
         + analogies_guide + "\n"
+        + theories_guide + "\n"
         "main_idea — одно предложение, суть темы, понятная без контекста.\n"
         "learning_steps — 4-6 шагов «что узнаём»: коротко, по порядку, для ребёнка.\n"
         "В simplified_text: 2-3 эмодзи для акцентов (🔍 💡 🌱 и т.п.). "
@@ -441,6 +453,15 @@ def _normalize_result(data: dict[str, Any], raw: dict[str, Any]) -> LLMResult:
         max_items=10,
     )
 
+    raw_theories = data.get("theories") or []
+    if not isinstance(raw_theories, list):
+        raw_theories = []
+    theories = [
+        {"title": _clean_text(x.get("title", "")), "text": _clean_text(x.get("text", ""))}
+        for x in raw_theories
+        if isinstance(x, dict) and (x.get("title") or x.get("text"))
+    ][:4]
+
     return LLMResult(
         main_idea=main_idea,
         simplified_text=text,
@@ -449,6 +470,7 @@ def _normalize_result(data: dict[str, Any], raw: dict[str, Any]) -> LLMResult:
         glossary=glossary,
         analogies=analogies,
         quiz=quiz,
+        theories=theories,
         raw=raw,
     )
 
@@ -554,10 +576,21 @@ def _gemini_schema() -> dict[str, Any]:
                     "required": ["question", "answer"],
                 },
             },
+            "theories": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "title": {"type": "STRING"},
+                        "text": {"type": "STRING"},
+                    },
+                    "required": ["title", "text"],
+                },
+            },
         },
         "required": [
             "main_idea", "simplified_text", "reasoning_steps",
-            "learning_steps", "glossary", "analogies", "quiz",
+            "learning_steps", "glossary", "analogies", "quiz", "theories",
         ],
     }
 
@@ -659,7 +692,7 @@ async def _chat(messages: list[dict[str, str]]) -> LLMResult:
             return LLMResult(
                 main_idea="", simplified_text=partial_text,
                 reasoning_steps=[], learning_steps=[],
-                glossary=[], analogies=[], quiz=[], raw=raw,
+                glossary=[], analogies=[], quiz=[], theories=[], raw=raw,
             )
         if str(e).startswith("llm_returned_malformed_json"):
             cleaned = re.sub(r"^\s*\{?\s*\"?simplified_text\"?\s*:\s*\"?", "", content, flags=re.DOTALL)
@@ -668,12 +701,12 @@ async def _chat(messages: list[dict[str, str]]) -> LLMResult:
                 return LLMResult(
                     main_idea="", simplified_text=cleaned,
                     reasoning_steps=[], learning_steps=[],
-                    glossary=[], analogies=[], quiz=[], raw=raw,
+                    glossary=[], analogies=[], quiz=[], theories=[], raw=raw,
                 )
         return LLMResult(
             main_idea="", simplified_text=content,
             reasoning_steps=[], learning_steps=[],
-            glossary=[], analogies=[], quiz=[], raw=raw,
+            glossary=[], analogies=[], quiz=[], theories=[], raw=raw,
         )
     return _normalize_result(data, raw)
 
@@ -772,5 +805,40 @@ async def repair_with_llm(original_text: str, simplified_text: str, age: int, mi
         [
             {"role": "system", "content": _system_prompt()},
             {"role": "user", "content": _repair_user_prompt(original, simplified_text, age, missing)},
+        ]
+    )
+
+
+def _llm_only_user_prompt(query: str, age: int, mode: str) -> str:
+    theories_note = (
+        "theories — если тема допускает несколько конкурирующих объяснений "
+        "(вымирание, катастрофы, исторические загадки) — добавь 2-4 теории. Иначе []."
+    )
+    return (
+        f"{_age_instructions(age)}\n\n"
+        f"{_mode_instructions(mode)}\n\n"
+        "ВАЖНО: статья в энциклопедии по данной теме не найдена. "
+        "Ответь на вопрос пользователя, опираясь на свои знания. "
+        "Придерживайся тех же принципов: объясняй механизм, давай аналогии, избегай воды.\n\n"
+        "--- ТРЕБОВАНИЯ К ВЫХОДНЫМ ПОЛЯМ ---\n"
+        "main_idea — одно предложение, суть темы.\n"
+        "simplified_text — объяснение для ребёнка (механизм, аналогия, вопрос). 2-3 эмодзи.\n"
+        "glossary — 3-5 ключевых терминов с определениями для указанного возраста.\n"
+        "analogies — 2-3 аналогии начинающихся с «Представь...» или «Это как...».\n"
+        "quiz — 3 вопроса на понимание (не память).\n"
+        "reasoning_steps — ход рассуждений (как ты пришёл к этому объяснению).\n"
+        "learning_steps — 4-6 шагов «что узнаём».\n"
+        f"{theories_note}\n\n"
+        f"Верни строго JSON: {_output_schema_text()}\n\n"
+        f"ВОПРОС: {query}"
+    )
+
+
+async def answer_without_article(query: str, age: int, mode: str = "balanced") -> LLMResult:
+    """Answer a question using LLM general knowledge when no wiki article was found."""
+    return await _chat(
+        [
+            {"role": "system", "content": _system_prompt()},
+            {"role": "user", "content": _llm_only_user_prompt(query, age, mode)},
         ]
     )

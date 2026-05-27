@@ -20,6 +20,7 @@ from app.services.ruwiki import fetch_article
 from app.services.llm import (
     LLMError,
     SummarizationResult,
+    answer_without_article,
     model_variant,
     repair_with_llm,
     simplify_with_llm,
@@ -56,6 +57,7 @@ class _LocalResult:
         self.glossary = payload.get("glossary", [])
         self.analogies = payload.get("analogies", [])
         self.quiz = payload.get("quiz", [])
+        self.theories = payload.get("theories", [])
         self.raw = {"provider": "local_extractive_fallback"}
 
 
@@ -229,6 +231,7 @@ def _build_cached_response(
         glossary=cached_payload["glossary"],
         analogies=cached_payload["analogies"],
         quiz=cached_payload.get("quiz", []),
+        theories=cached_payload.get("theories", []),
         quality=cached_payload["quality"],
         accuracy=acc,
         evaluation=cached_payload.get("evaluation") or _EMPTY_EVALUATION,
@@ -236,6 +239,90 @@ def _build_cached_response(
         verifier=cached_payload.get("verifier") or _EMPTY_VERIFIER,
         cached=True,
         metrics_enabled=cached_payload.get("metrics_enabled", True),
+        llm_only=cached_payload.get("llm_only", False),
+        timings_ms=timings,
+        history_key=history_key,
+    )
+
+
+async def _llm_only_pipeline(
+    query: str,
+    age: int,
+    age_group: str,
+    mode: str,
+    model_id: str | None,
+    timings: dict[str, int],
+    t0: float,
+) -> SimplifyResponse:
+    """Answer a question using LLM general knowledge when no wiki article exists."""
+    effective_model = model_id or settings.llm_model
+    model = {"provider": settings.llm_provider, "name": effective_model}
+
+    s0 = time.perf_counter()
+    try:
+        simplified = await answer_without_article(query, age=age, mode=mode)
+    except (LLMError, TimeoutError) as e:
+        logger.warning("LLM answer_without_article failed: %s", e)
+        raise ValueError("no_relevant_article") from e
+    timings["llm_only"] = int((time.perf_counter() - s0) * 1000)
+
+    _apply_readability(simplified, age=age)
+    quality = _quality_report(simplified.simplified_text, age=age, raw=simplified.raw)
+    accuracy = {"metric_label": "ИИ без статьи", "metric_key": "llm_only", "score": 1.0, "percent": 100}
+
+    total_ms = int((time.perf_counter() - t0) * 1000)
+    timings["total"] = total_ms
+
+    payload = {
+        "query": query,
+        "age": age,
+        "age_group": age_group,
+        "mode": mode,
+        "source_title": "",
+        "source_url": "",
+        "original_text": "",
+        "main_idea": simplified.main_idea,
+        "simplified_text": simplified.simplified_text,
+        "reasoning_steps": simplified.reasoning_steps,
+        "learning_steps": simplified.learning_steps,
+        "glossary": simplified.glossary,
+        "analogies": simplified.analogies,
+        "quiz": simplified.quiz,
+        "theories": simplified.theories,
+        "quality": quality,
+        "accuracy": accuracy,
+        "evaluation": _EMPTY_EVALUATION,
+        "model": model,
+        "verifier": _EMPTY_VERIFIER,
+        "metrics_enabled": False,
+        "llm_only": True,
+    }
+    history_key = log_history(payload, cached=False, latency_ms=total_ms, timings=timings)
+
+    return SimplifyResponse(
+        query=query,
+        age=age,
+        age_group=age_group,
+        mode=mode,
+        source_title="",
+        source_url="",
+        original_text="",
+        main_idea=simplified.main_idea,
+        simplified_text=simplified.simplified_text,
+        reasoning_steps=simplified.reasoning_steps,
+        learning_steps=simplified.learning_steps,
+        glossary=simplified.glossary,
+        analogies=simplified.analogies,
+        quiz=simplified.quiz,
+        theories=simplified.theories,
+        quality=quality,
+        accuracy=accuracy,
+        evaluation=_EMPTY_EVALUATION,
+        model=model,
+        verifier=_EMPTY_VERIFIER,
+        cached=False,
+        metrics_enabled=False,
+        llm_only=True,
         timings_ms=timings,
         history_key=history_key,
     )
@@ -279,7 +366,13 @@ async def simplify_pipeline(
 
     # --- Fetch article ---
     a0 = time.perf_counter()
-    article = await fetch_article(query)
+    try:
+        article = await fetch_article(query)
+    except ValueError as e:
+        if "no_relevant_article" in str(e):
+            timings["fetch_article"] = int((time.perf_counter() - a0) * 1000)
+            return await _llm_only_pipeline(query, age, age_group, mode, model_id, timings, t0)
+        raise
     timings["fetch_article"] = int((time.perf_counter() - a0) * 1000)
     original_text = _mvp_article_slice(article.text)
     key_facts = extract_key_facts(original_text)
@@ -412,6 +505,7 @@ async def simplify_pipeline(
         "glossary": simplified.glossary,
         "analogies": simplified.analogies,
         "quiz": simplified.quiz,
+        "theories": simplified.theories,
         "quality": quality,
         "accuracy": accuracy,
         "evaluation": evaluation,
@@ -483,6 +577,7 @@ async def simplify_pipeline(
         glossary=simplified.glossary,
         analogies=simplified.analogies,
         quiz=simplified.quiz,
+        theories=simplified.theories,
         quality=quality,
         accuracy=accuracy,
         evaluation=evaluation,

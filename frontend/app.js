@@ -264,6 +264,13 @@ function addAssistantMessage(data) {
   const msgId = `msg_${Date.now()}`;
   $el.attr("id", msgId);
 
+  // LLM-only banner (no wiki article found)
+  if (data.llm_only) {
+    $("<div>").addClass("msgLlmOnlyBanner")
+      .text("Статьи в энциклопедии не нашлось — отвечает ИИ по своим знаниям")
+      .appendTo($el);
+  }
+
   // Main idea
   const $idea = $("<div>").addClass("msgMainIdea");
   $("<div>").addClass("msgMainIdeaLabel").text("Главная мысль").appendTo($idea);
@@ -300,12 +307,27 @@ function addAssistantMessage(data) {
       // strip leading "Term — " or "Term: " if the LLM duplicated the term
       const termPrefix = new RegExp("^" + item.term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*[-—–:]\\s*", "i");
       def = def.replace(termPrefix, "");
+      // lowercase first letter since it follows an em-dash
+      def = def.charAt(0).toLowerCase() + def.slice(1);
       $("<div>").addClass("msgGlossaryItem")
         .append($("<span>").addClass("msgGlossaryTerm").text(item.term + " "))
         .append(document.createTextNode("— " + def))
         .appendTo($gBox);
     });
     $body.append($gSec);
+  }
+
+  // Theories
+  if (data.theories?.length) {
+    const $tSec = $("<div>").addClass("msgSection");
+    $("<div>").addClass("msgSectionTitle").text("🔭 Версии и теории").appendTo($tSec);
+    data.theories.forEach(t => {
+      const $card = $("<div>").addClass("msgTheoryCard");
+      $("<div>").addClass("msgTheoryTitle").text(t.title).appendTo($card);
+      $("<div>").addClass("msgTheoryText").text(t.text).appendTo($card);
+      $card.appendTo($tSec);
+    });
+    $body.append($tSec);
   }
 
   // Sources
@@ -562,9 +584,12 @@ function speak(text, $btn) {
   window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = "ru-RU";
-  u.rate = 0.92;
+  u.rate = 0.88;
+  u.pitch = 1.05;
   const voices = window.speechSynthesis.getVoices();
-  const ruVoice = voices.find(v => v.lang.startsWith("ru"));
+  const ruVoices = voices.filter(v => v.lang.startsWith("ru"));
+  // Local/system voices (Milena, Siri) sound more natural than network voices
+  const ruVoice = ruVoices.find(v => v.localService) || ruVoices[0];
   if (ruVoice) u.voice = ruVoice;
   if ($btn) {
     $btn.addClass("speaking").text("⏹ Стоп");

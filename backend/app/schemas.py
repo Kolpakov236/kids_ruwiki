@@ -33,6 +33,7 @@ class SimplifyResponse(BaseModel):
     glossary: list[dict]
     analogies: list[str]
     quiz: list[dict]
+    theories: list[dict] = []
     quality: dict
     accuracy: dict
     evaluation: dict
@@ -40,6 +41,7 @@ class SimplifyResponse(BaseModel):
     verifier: dict
     cached: bool
     metrics_enabled: bool
+    llm_only: bool = False
     timings_ms: dict[str, int]
     history_key: str = ""
 

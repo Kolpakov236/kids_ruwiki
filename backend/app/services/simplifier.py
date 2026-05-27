@@ -146,6 +146,7 @@ def build_extractive_fallback(original_text: str, age: int, key_facts: dict[str,
     return {
         "main_idea": intro,
         "simplified_text": text,
+        "theories": [],
         "reasoning_steps": [
             "LLM не успела ответить, поэтому включён быстрый локальный режим.",
             "Ответ собран из предложений статьи, где есть обязательные термины и формулы.",
