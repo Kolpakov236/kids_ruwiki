@@ -281,7 +281,16 @@ def _wikipedia_api_candidates() -> list[str]:
 # Main fetch logic
 # ---------------------------------------------------------------------------
 
-async def fetch_article(query: str) -> RuwikiArticle:
+async def fetch_article(
+    query: str,
+    exclude_titles: frozenset[str] | None = None,
+) -> RuwikiArticle:
+    """
+    Fetch the most relevant wiki article for *query*.
+
+    exclude_titles – lowercase article titles to skip (used by reflection loop
+                     to avoid re-fetching already-rejected articles).
+    """
     q = query.strip()
     if not q:
         raise ValueError("empty_query")
@@ -312,7 +321,8 @@ async def fetch_article(query: str) -> RuwikiArticle:
         attempts = 0
         max_attempts = 48
         had_network_error = False
-        _seen_titles: set[str] = set()
+        # Pre-populate seen_titles with titles we should skip (from reflection loop)
+        _seen_titles: set[str] = set(exclude_titles or [])
 
         async def try_mw_extract(api_url: str, requested_title: str) -> RuwikiArticle | None:
             nonlocal last_err, attempts

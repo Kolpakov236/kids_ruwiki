@@ -184,6 +184,7 @@ def _simplify_user_prompt(
     key_facts: dict | None = None,
     summary: SummarizationResult | None = None,
     query: str = "",
+    retry_context: str = "",
 ) -> str:
     facts = key_facts or {}
     required_terms = [str(x) for x in facts.get("required_terms") or []][:48]
@@ -285,10 +286,20 @@ def _simplify_user_prompt(
 
     query_line = f"ЗАПРОС ПОЛЬЗОВАТЕЛЯ: {query}\n\n" if query else ""
 
+    retry_block = ""
+    if retry_context:
+        retry_block = (
+            f"⚠️ ПОВТОРНАЯ ПОПЫТКА: {retry_context}.\n"
+            "Предыдущий результат не отвечал на запрос пользователя. "
+            "В simplified_text фокусируйся КОНКРЕТНО на том, что спросил пользователь, "
+            "а не на общем описании темы.\n\n"
+        )
+
     return (
         f"{_age_instructions(age)}\n\n"
         f"{_mode_instructions(mode)}\n\n"
         + query_line
+        + retry_block
         + fact_block
         + mechanism_hint
         + misconception_hint
@@ -799,6 +810,7 @@ async def simplify_with_llm(
     key_facts: dict | None = None,
     summary: SummarizationResult | None = None,
     query: str = "",
+    retry_context: str = "",
 ) -> LLMResult:
     """Step 2: Turn the structured summary into a clear, deep explanation for children."""
     input_text = original_text
@@ -811,7 +823,7 @@ async def simplify_with_llm(
             {"role": "system", "content": _system_prompt()},
             {
                 "role": "user",
-                "content": _simplify_user_prompt(text, age, mode, key_facts, summary, query),
+                "content": _simplify_user_prompt(text, age, mode, key_facts, summary, query, retry_context),
             },
         ]
     )
