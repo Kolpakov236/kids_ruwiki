@@ -14,9 +14,10 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-MAX_LOOP_ATTEMPTS = 3          # max reflection iterations before accepting best result
+MAX_LOOP_ATTEMPTS = 3          # kept for legacy; generate-then-retrieve doesn't use a loop
 ARTICLE_OK_THRESHOLD = 0.50    # relevance score above which article is accepted immediately
 ARTICLE_MIN_THRESHOLD = 0.25   # below this score article is always rejected
+ARTICLE_ACCEPT_THRESHOLD = 0.35  # min score for article to beat the LLM-only answer
 
 
 @dataclass
@@ -28,6 +29,52 @@ class ValidationResult:
 
 # ---------------------------------------------------------------------------
 # Article validation
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Generate-then-retrieve scoring
+# ---------------------------------------------------------------------------
+
+def score_article_vs_llm(llm_text: str, article_title: str, article_text: str) -> float:
+    """
+    How well does this article match the LLM-generated preliminary answer?
+
+    Measures key-word overlap between the LLM text and the article content.
+    High score → article covers the same topic the LLM answered about.
+    Bonus when the article title itself appears in the LLM text (strong signal).
+    """
+    from app.services.ruwiki import _RU_PREPOSITIONS
+
+    if not llm_text or not article_text:
+        return 0.0
+
+    # Stem (first 6 chars) word sets, ignoring prepositions and short tokens
+    llm_words = set(
+        w[:6] for w in re.findall(r"\w{4,}", llm_text.lower())
+        if w not in _RU_PREPOSITIONS
+    )
+    if not llm_words:
+        return 0.0
+
+    art_content = (article_title + " " + article_text[:3000]).lower()
+    art_words = set(w[:6] for w in re.findall(r"\w{4,}", art_content))
+
+    overlap = len(llm_words & art_words) / len(llm_words)
+
+    # Strong bonus: article title stem appears in LLM text
+    title_stem = re.sub(r"\s+", "", article_title.lower())[:8]
+    title_bonus = 0.20 if title_stem and title_stem in llm_text.lower() else 0.0
+
+    score = min(1.0, overlap + title_bonus)
+    logger.debug(
+        "score_article_vs_llm: title=%r overlap=%.3f title_bonus=%.2f → %.3f",
+        article_title, overlap, title_bonus, score,
+    )
+    return round(score, 4)
+
+
+# ---------------------------------------------------------------------------
+# Article validation (used for optional extra checks)
 # ---------------------------------------------------------------------------
 
 def validate_article(query: str, title: str, text: str) -> ValidationResult:

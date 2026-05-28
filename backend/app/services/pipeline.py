@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -26,7 +27,7 @@ from app.services.llm import (
     simplify_with_llm,
     summarize_article,
 )
-from app.services.reflection import MAX_LOOP_ATTEMPTS, validate_article, validate_answer
+from app.services.reflection import ARTICLE_ACCEPT_THRESHOLD, score_article_vs_llm
 from app.services.simplifier import build_extractive_fallback, improve_child_readability
 from app.services.verifier import (
     anchor_coverage,
@@ -36,24 +37,6 @@ from app.services.verifier import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Ranking/opinion queries — no single wiki article answers these; LLM general
-# knowledge gives far better results (specific names, achievements, records).
-_RANKING_QUERY_RE = re.compile(
-    r"^(?:кто|что|какой|какая|какое|какие)\s+"
-    r"(?:самый\s+|самая\s+|самое\s+|самые\s+)?"
-    r"(?:лучший|лучшая|лучшее|лучшие|"
-    r"величайший|величайшая|величайшее|величайшие|"
-    r"известный|известная|известное|известные|"
-    r"знаменитый|знаменитая|знаменитое|знаменитые|"
-    r"популярный|популярная|популярное|популярные|"
-    r"богатый|богатая|богатые|"
-    r"умный|умная|умные|"
-    r"быстрый|быстрая|быстрые|"
-    r"сильный|сильная|сильные|"
-    r"главный|главная|главное|главные)\b",
-    re.IGNORECASE | re.UNICODE,
-)
 
 _EMPTY_SUMMARY = SummarizationResult(
     condensed_text="", core_concept="", key_terms=[],
@@ -272,18 +255,23 @@ async def _llm_only_pipeline(
     model_id: str | None,
     timings: dict[str, int],
     t0: float,
+    pre_generated=None,  # already-generated LLMResult — skip the LLM call if provided
 ) -> SimplifyResponse:
-    """Answer a question using LLM general knowledge when no wiki article exists."""
+    """Answer a question using LLM general knowledge when no wiki article matches."""
     effective_model = model_id or settings.llm_model
     model = {"provider": settings.llm_provider, "name": effective_model}
 
     s0 = time.perf_counter()
-    try:
-        simplified = await answer_without_article(query, age=age, mode=mode)
-    except (LLMError, TimeoutError) as e:
-        logger.warning("LLM answer_without_article failed: %s", e)
-        raise ValueError("no_relevant_article") from e
-    timings["llm_only"] = int((time.perf_counter() - s0) * 1000)
+    if pre_generated is not None:
+        simplified = pre_generated
+        timings["llm_only"] = 0  # already counted as llm_preliminary
+    else:
+        try:
+            simplified = await answer_without_article(query, age=age, mode=mode)
+        except (LLMError, TimeoutError) as e:
+            logger.warning("LLM answer_without_article failed: %s", e)
+            raise ValueError("no_relevant_article") from e
+        timings["llm_only"] = int((time.perf_counter() - s0) * 1000)
 
     _apply_readability(simplified, age=age)
     quality = _quality_report(simplified.simplified_text, age=age, raw=simplified.raw)
@@ -347,6 +335,63 @@ async def _llm_only_pipeline(
     )
 
 
+def _build_search_hints(query: str, llm_result) -> list[str]:
+    """
+    Build an ordered list of search queries.
+    Starts with the standard query variants, then appends proper nouns and key terms
+    that the LLM itself mentioned — pointing us toward the specific articles it knows
+    are relevant.
+    """
+    from app.services.ruwiki import _extract_search_queries
+
+    hints: list[str] = list(_extract_search_queries(query))
+
+    if llm_result is None:
+        return hints
+
+    text = llm_result.simplified_text or ""
+
+    # Proper nouns from the LLM text (e.g. "Криштиану Роналду", "Лионель Месси")
+    proper_nouns = re.findall(r"\b[А-ЯЁ][а-яё]{3,}(?:\s+[А-ЯЁ][а-яё]{3,})*\b", text)
+    seen_lower = {h.lower() for h in hints}
+    for pn in proper_nouns[:4]:
+        if pn.lower() not in seen_lower:
+            hints.append(pn)
+            seen_lower.add(pn.lower())
+
+    # Glossary terms (e.g. "чёрная дыра", "гравитация")
+    for item in (llm_result.glossary or [])[:3]:
+        term = (item.get("term") or "").strip()
+        if term and len(term) >= 3 and term.lower() not in seen_lower:
+            hints.append(term)
+            seen_lower.add(term.lower())
+
+    return hints[:8]
+
+
+async def _fetch_articles_parallel(hints: list[str]) -> list:
+    """
+    Fetch wiki articles for every hint in parallel.
+    Silently ignores errors (article not found, network issue, etc.).
+    De-duplicates by article title.
+    """
+    async def _safe_fetch(hint: str):
+        try:
+            return await fetch_article(hint)
+        except Exception:
+            return None
+
+    results = await asyncio.gather(*[_safe_fetch(h) for h in hints])
+
+    seen: set[str] = set()
+    out = []
+    for art in results:
+        if art is not None and art.title.lower() not in seen:
+            seen.add(art.title.lower())
+            out.append(art)
+    return out
+
+
 async def simplify_pipeline(
     query: str,
     age: int,
@@ -383,132 +428,113 @@ async def simplify_pipeline(
             return resp
         cached_payload = None
 
-    # --- Ranking/opinion queries bypass wiki entirely ---
-    if _RANKING_QUERY_RE.match(query.strip()):
-        return await _llm_only_pipeline(query, age, age_group, mode, model_id, timings, t0)
-
     effective_model = model_id or settings.llm_model
     model = {"provider": settings.llm_provider, "name": effective_model}
 
-    # --- Reflection loop ---
-    # Each iteration: fetch article → validate → simplify → validate answer.
-    # On failure: exclude bad article, add retry context, try again (max MAX_LOOP_ATTEMPTS).
+    # ── Step 1: LLM generates a preliminary answer from its own knowledge ─────
+    # This answer drives the article search and serves as fallback if no article
+    # matches well enough.
+    _p0 = time.perf_counter()
+    try:
+        _llm_prelim = await answer_without_article(query, age=age, mode=mode)
+    except (LLMError, TimeoutError) as e:
+        logger.warning("preliminary LLM call failed (%s) — will search blindly", e)
+        _llm_prelim = None
+    timings["llm_preliminary"] = int((time.perf_counter() - _p0) * 1000)
+
+    # ── Step 2: Build search hints from query + entities the LLM mentioned ───
+    _hints = _build_search_hints(query, _llm_prelim)
+
+    # ── Step 3: Fetch articles for all hints in parallel ─────────────────────
+    _f0 = time.perf_counter()
+    _candidates = await _fetch_articles_parallel(_hints)
+    timings["fetch_article"] = int((time.perf_counter() - _f0) * 1000)
+
+    # ── Step 4: Score each candidate against the LLM answer ──────────────────
     article = None
-    simplified = None
-    original_text = ""
-    key_facts: dict = {}
-    key = ""
+    _best_score = 0.0
+    if _llm_prelim and _candidates:
+        for _art in _candidates:
+            _sc = score_article_vs_llm(_llm_prelim.simplified_text, _art.title, _art.text)
+            if _sc > _best_score:
+                _best_score = _sc
+                article = _art
+
+    logger.info(
+        "generate-then-retrieve: hints=%d candidates=%d best=%r score=%.3f (threshold=%.2f)",
+        len(_hints), len(_candidates),
+        article.title if article else None,
+        _best_score, ARTICLE_ACCEPT_THRESHOLD,
+    )
+
+    # ── Step 5: Route based on article quality ────────────────────────────────
+    if article is None or _best_score < ARTICLE_ACCEPT_THRESHOLD:
+        # No article matched → the preliminary LLM answer is already the best we have
+        return await _llm_only_pipeline(
+            query, age, age_group, mode, model_id, timings, t0,
+            pre_generated=_llm_prelim,
+        )
+
+    # ── Article won → full article-based simplification ───────────────────────
+    original_text = _mvp_article_slice(article.text)
+    key_facts = extract_key_facts(original_text)
+    key = cache_key(
+        query=query, age_group=age_group, mode=mode,
+        source_title=article.title, model_variant=model_variant(), key_facts=key_facts,
+    )
+
+    # Per-article SQLite cache check
+    cached_payload = get_sqlite_cached(key)
+    if cached_payload:
+        resp = _build_cached_response(cached_payload, age, age_group, mode, timings, t0)
+        if resp:
+            return resp
+        cached_payload = None
+
+    # Vector lookup for similar originals (full metrics mode only)
+    sims = []
+    if settings.enable_vector_cache and enable_metrics:
+        _c0 = time.perf_counter()
+        try:
+            sims = get_similar_originals(original_text, top_k=1)
+        except Exception:
+            logger.exception("vector lookup failed")
+            timings["vector_lookup_failed"] = 1
+        timings["vector_lookup"] = int((time.perf_counter() - _c0) * 1000)
+
+    # Summarize (full mode only)
     summary: SummarizationResult = _EMPTY_SUMMARY
-    sims: list = []
-    excluded_titles: set[str] = set()
-    retry_context = ""
-    _loop_fetch_ms = 0
-    _loop_simplify_ms = 0
-
-    for _attempt in range(MAX_LOOP_ATTEMPTS):
-
-        # Fetch: skip titles already rejected in previous iterations
-        _a0 = time.perf_counter()
-        try:
-            _article = await fetch_article(query, exclude_titles=frozenset(excluded_titles))
-        except ValueError as e:
-            _loop_fetch_ms += int((time.perf_counter() - _a0) * 1000)
-            if "no_relevant_article" in str(e):
-                logger.info("reflection[%d/%d]: no article found, will use LLM-only", _attempt + 1, MAX_LOOP_ATTEMPTS)
-                break
-            raise
-        _loop_fetch_ms += int((time.perf_counter() - _a0) * 1000)
-
-        # Validate article relevance
-        art_val = validate_article(query, _article.title, _article.text)
+    if enable_metrics:
+        _sum0 = time.perf_counter()
+        summary = await summarize_article(original_text, query)
+        timings["summarize_article"] = int((time.perf_counter() - _sum0) * 1000)
         logger.info(
-            "reflection[%d/%d] article=%r ok=%s %s",
-            _attempt + 1, MAX_LOOP_ATTEMPTS, _article.title, art_val.ok, art_val.reason,
+            "summarize: %dms, %d→%d chars",
+            timings["summarize_article"], len(original_text), len(summary.condensed_text),
         )
 
-        if not art_val.ok and _attempt < MAX_LOOP_ATTEMPTS - 1:
-            excluded_titles.add(_article.title.lower())
-            retry_context = f"статья «{_article.title}» нерелевантна ({art_val.reason})"
-            continue
-
-        # Article accepted — prepare pipeline state
-        article = _article
-        original_text = _mvp_article_slice(article.text)
-        key_facts = extract_key_facts(original_text)
-        key = cache_key(
-            query=query, age_group=age_group, mode=mode,
-            source_title=article.title, model_variant=model_variant(), key_facts=key_facts,
+    # Simplify — hand the LLM its own preliminary take as a quality anchor
+    _prelim_hint = ""
+    if _llm_prelim and _llm_prelim.main_idea:
+        _prelim_hint = (
+            f"LLM предварительно определил суть: «{_llm_prelim.main_idea}». "
+            "Уточни и дополни по тексту статьи, сохранив точность."
         )
 
-        # Per-article SQLite cache check
-        cached_payload = get_sqlite_cached(key)
-        if cached_payload:
-            resp = _build_cached_response(cached_payload, age, age_group, mode, timings, t0)
-            if resp:
-                return resp
-            cached_payload = None
-
-        # Vector lookup for similar originals (full metrics mode only)
-        sims = []
-        if settings.enable_vector_cache and enable_metrics:
-            _c0 = time.perf_counter()
-            try:
-                sims = get_similar_originals(original_text, top_k=1)
-            except Exception:
-                logger.exception("vector lookup failed")
-                timings["vector_lookup_failed"] = 1
-            timings["vector_lookup"] = int((time.perf_counter() - _c0) * 1000)
-
-        # Summarize (full mode only)
-        summary = _EMPTY_SUMMARY
-        if enable_metrics:
-            _sum0 = time.perf_counter()
-            summary = await summarize_article(original_text, query)
-            timings["summarize_article"] = int((time.perf_counter() - _sum0) * 1000)
-            logger.info(
-                "reflection[%d] summarize: %dms, %d→%d chars",
-                _attempt + 1, timings["summarize_article"],
-                len(original_text), len(summary.condensed_text),
-            )
-
-        # Simplify — pass retry_context on subsequent attempts
-        _s0 = time.perf_counter()
-        try:
-            simplified = await simplify_with_llm(
-                original_text, age=age, mode=mode,
-                key_facts=key_facts,
-                summary=summary if enable_metrics else None,
-                query=query,
-                retry_context=retry_context,
-            )
-        except (LLMError, TimeoutError) as e:
-            logger.warning("LLM simplify failed at attempt %d: %s", _attempt + 1, e)
-            timings["llm_fallback"] = 1
-            simplified = _LocalResult(build_extractive_fallback(original_text, age=age, key_facts=key_facts))
-        _loop_simplify_ms += int((time.perf_counter() - _s0) * 1000)
-
-        # Validate answer quality
-        ans_val = validate_answer(query, simplified.simplified_text)
-        logger.info(
-            "reflection[%d/%d] answer ok=%s %s",
-            _attempt + 1, MAX_LOOP_ATTEMPTS, ans_val.ok, ans_val.reason,
+    _s0 = time.perf_counter()
+    try:
+        simplified = await simplify_with_llm(
+            original_text, age=age, mode=mode,
+            key_facts=key_facts,
+            summary=summary if enable_metrics else None,
+            query=query,
+            retry_context=_prelim_hint,
         )
-
-        if ans_val.ok or _attempt == MAX_LOOP_ATTEMPTS - 1:
-            break  # accept this result
-
-        # Answer failed validation — try a different article next round
-        excluded_titles.add(article.title.lower())
-        retry_context = f"статья «{article.title}», ответ нерелевантен ({ans_val.reason})"
-        article = None
-        simplified = None
-
-    timings["fetch_article"] = _loop_fetch_ms
-    timings["simplify"] = _loop_simplify_ms
-
-    # No usable result after all attempts → LLM-only fallback
-    if article is None or simplified is None:
-        return await _llm_only_pipeline(query, age, age_group, mode, model_id, timings, t0)
+    except (LLMError, TimeoutError) as e:
+        logger.warning("LLM simplify failed: %s", e)
+        timings["llm_fallback"] = 1
+        simplified = _LocalResult(build_extractive_fallback(original_text, age=age, key_facts=key_facts))
+    timings["simplify"] = int((time.perf_counter() - _s0) * 1000)
 
     _apply_readability(simplified, age=age)
 
