@@ -26,6 +26,7 @@ from app.services.llm import (
     model_variant,
 )
 from app.services.reflection import score_article_vs_llm
+from app.services.moderation import is_adult_content, _REFUSAL_TEXT
 from app.services.simplifier import improve_child_readability
 from app.services.verifier import (
     evaluate_answer_quality,
@@ -306,6 +307,28 @@ async def simplify_pipeline(
     timings: dict[str, int] = {}
 
     age_group = _age_group(age)
+
+    # --- Content moderation (runs before any LLM/cache logic) ---
+    if is_adult_content(query):
+        logger.info("content_filter: blocked query age=%d", age)
+        _model = {"provider": settings.llm_provider, "name": model_id or settings.llm_model}
+        _quality = {"ok": True, "issues": [], "sentence_count": 2, "word_count": 22,
+                    "max_sentence_words": 15, "finish_reason": None}
+        _accuracy = {"metric_label": "Фильтр контента", "metric_key": "content_filter",
+                     "score": 1.0, "percent": 100}
+        return SimplifyResponse(
+            query=query, age=age, age_group=age_group, mode=mode,
+            source_title="", source_url="", original_text="",
+            main_idea="Этот вопрос не подходит для детской энциклопедии.",
+            simplified_text=_REFUSAL_TEXT,
+            reasoning_steps=[], learning_steps=[], glossary=[],
+            analogies=[], quiz=[], theories=[],
+            quality=_quality, accuracy=_accuracy, evaluation={},
+            model=_model, verifier=_EMPTY_VERIFIER,
+            cached=False, metrics_enabled=False, llm_only=True,
+            timings_ms={"total": int((time.perf_counter() - t0) * 1000)},
+            history_key=None,
+        )
 
     # --- Vector answer cache (skip in fast mode to save latency) ---
     cached_payload = None
