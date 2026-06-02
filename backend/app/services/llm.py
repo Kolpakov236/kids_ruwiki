@@ -866,9 +866,9 @@ def _llm_only_user_prompt(query: str, age: int, mode: str) -> str:
         )
     else:
         context_note = (
-            "ВАЖНО: статья в энциклопедии по данной теме не найдена. "
-            "Ответь на вопрос пользователя, опираясь на свои знания. "
-            "Придерживайся тех же принципов: объясняй механизм, давай аналогии, избегай воды.\n\n"
+            "Ответь ТОЧНО на вопрос пользователя, опираясь на свои знания. "
+            "Не описывай тему вообще — давай конкретный ответ на то, что спрошено. "
+            "Если вопрос «каких X больше всего» — назови конкретный тип X, а не что такое X.\n\n"
         )
 
     theories_note = (
@@ -901,3 +901,89 @@ async def answer_without_article(query: str, age: int, mode: str = "balanced") -
             {"role": "user", "content": _llm_only_user_prompt(query, age, mode)},
         ]
     )
+
+
+async def enrich_answer_with_articles(
+    question: str,
+    llm_answer: LLMResult,
+    article_excerpts: list[tuple[str, str]],
+    age: int,
+    mode: str = "balanced",
+) -> LLMResult:
+    """
+    Enrich the simplified_text of a direct LLM answer with specific facts
+    from Ruwiki articles.
+
+    KEY DESIGN: only simplified_text is updated. All structured fields
+    (glossary, analogies, quiz, theories, learning_steps, reasoning_steps)
+    are taken unchanged from the original LLM answer so they stay correctly
+    focused on the actual question, not on the article topic.
+
+    Falls back to the original LLM answer on any error.
+    """
+    if not article_excerpts:
+        return llm_answer
+
+    excerpts_text = ""
+    for title, text in article_excerpts[:3]:
+        chunk = text[:1400].strip()
+        excerpts_text += f"\n--- «{title}» ---\n{chunk}\n"
+
+    age_note = (
+        "Простые короткие предложения (до 7 слов)." if age <= 8 else
+        "Предложения до 12 слов, школьная лексика." if age <= 11 else
+        "Ясный точный стиль, научные термины с определением."
+    )
+
+    prompt = (
+        f"ВОПРОС: «{question}»\n\n"
+        f"ТЕКУЩИЙ ОТВЕТ (правильный — не переписывать полностью):\n{llm_answer.simplified_text}\n\n"
+        f"СПРАВОЧНЫЕ МАТЕРИАЛЫ ИЗ RUWIKI:{excerpts_text}\n"
+        "─────────────────────────────────\n"
+        "ЗАДАЧА: Улучши ТОЛЬКО текст ответа:\n"
+        "• Добавь точные числа/даты/научные названия из статей, если их нет\n"
+        "• Уточни факт, если статья даёт более точные данные\n"
+        "• Если статьи ничего полезного не добавляют — верни текст БЕЗ изменений\n"
+        "• Ответ ДОЛЖЕН отвечать на вопрос, а не описывать тему вообще\n"
+        f"• Стиль: {age_note}\n\n"
+        "Верни ТОЛЬКО улучшенный текст ответа — без JSON, без заголовков, без пояснений."
+    )
+
+    try:
+        raw = await _call_provider([
+            {
+                "role": "system",
+                "content": (
+                    "Ты редактор детских текстов. Улучшай ответы, добавляя конкретные факты "
+                    "из справочных материалов. Не меняй основную тему и не переписывай полностью."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ])
+        enriched_text = _content_from_response(raw).strip()
+
+        # Strip any accidental JSON/markdown wrapping
+        if enriched_text.startswith("```"):
+            enriched_text = re.sub(r"^```\w*\n?", "", enriched_text)
+            enriched_text = re.sub(r"\n?```$", "", enriched_text)
+        enriched_text = _clean_text(enriched_text)
+
+        if not enriched_text or len(enriched_text) < 40:
+            return llm_answer
+
+        # Preserve ALL structured fields from the original correct answer.
+        # Only simplified_text is updated with article facts.
+        return LLMResult(
+            main_idea=llm_answer.main_idea,
+            simplified_text=enriched_text,
+            reasoning_steps=llm_answer.reasoning_steps,
+            learning_steps=llm_answer.learning_steps,
+            glossary=llm_answer.glossary,
+            analogies=llm_answer.analogies,
+            quiz=llm_answer.quiz,
+            theories=llm_answer.theories,
+            raw=llm_answer.raw,
+        )
+    except Exception as e:
+        logger.warning("enrich_answer_with_articles failed (%s) — using original", e)
+        return llm_answer

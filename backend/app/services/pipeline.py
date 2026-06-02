@@ -22,15 +22,12 @@ from app.services.llm import (
     LLMError,
     SummarizationResult,
     answer_without_article,
+    enrich_answer_with_articles,
     model_variant,
-    repair_with_llm,
-    simplify_with_llm,
-    summarize_article,
 )
-from app.services.reflection import ARTICLE_ACCEPT_THRESHOLD, score_article_vs_llm
-from app.services.simplifier import build_extractive_fallback, improve_child_readability
+from app.services.reflection import score_article_vs_llm
+from app.services.simplifier import improve_child_readability
 from app.services.verifier import (
-    anchor_coverage,
     evaluate_answer_quality,
     extract_key_facts,
     factual_consistency,
@@ -50,17 +47,6 @@ _EMPTY_EVALUATION: dict = {
 _EMPTY_VERIFIER: dict = {"score": 1.0, "missing": [], "breakdown": {}}
 
 
-class _LocalResult:
-    def __init__(self, payload: dict):
-        self.main_idea = payload.get("main_idea", "")
-        self.simplified_text = payload.get("simplified_text", "")
-        self.reasoning_steps = payload.get("reasoning_steps", [])
-        self.learning_steps = payload.get("learning_steps", [])
-        self.glossary = payload.get("glossary", [])
-        self.analogies = payload.get("analogies", [])
-        self.quiz = payload.get("quiz", [])
-        self.theories = payload.get("theories", [])
-        self.raw = {"provider": "local_extractive_fallback"}
 
 
 def _age_group(age: int) -> str:
@@ -247,92 +233,6 @@ def _build_cached_response(
     )
 
 
-async def _llm_only_pipeline(
-    query: str,
-    age: int,
-    age_group: str,
-    mode: str,
-    model_id: str | None,
-    timings: dict[str, int],
-    t0: float,
-    pre_generated=None,  # already-generated LLMResult — skip the LLM call if provided
-) -> SimplifyResponse:
-    """Answer a question using LLM general knowledge when no wiki article matches."""
-    effective_model = model_id or settings.llm_model
-    model = {"provider": settings.llm_provider, "name": effective_model}
-
-    s0 = time.perf_counter()
-    if pre_generated is not None:
-        simplified = pre_generated
-        timings["llm_only"] = 0  # already counted as llm_preliminary
-    else:
-        try:
-            simplified = await answer_without_article(query, age=age, mode=mode)
-        except (LLMError, TimeoutError) as e:
-            logger.warning("LLM answer_without_article failed: %s", e)
-            raise ValueError("no_relevant_article") from e
-        timings["llm_only"] = int((time.perf_counter() - s0) * 1000)
-
-    _apply_readability(simplified, age=age)
-    quality = _quality_report(simplified.simplified_text, age=age, raw=simplified.raw)
-    accuracy = {"metric_label": "ИИ без статьи", "metric_key": "llm_only", "score": 1.0, "percent": 100}
-
-    total_ms = int((time.perf_counter() - t0) * 1000)
-    timings["total"] = total_ms
-
-    payload = {
-        "query": query,
-        "age": age,
-        "age_group": age_group,
-        "mode": mode,
-        "source_title": "",
-        "source_url": "",
-        "original_text": "",
-        "main_idea": simplified.main_idea,
-        "simplified_text": simplified.simplified_text,
-        "reasoning_steps": simplified.reasoning_steps,
-        "learning_steps": simplified.learning_steps,
-        "glossary": simplified.glossary,
-        "analogies": simplified.analogies,
-        "quiz": simplified.quiz,
-        "theories": simplified.theories,
-        "quality": quality,
-        "accuracy": accuracy,
-        "evaluation": _EMPTY_EVALUATION,
-        "model": model,
-        "verifier": _EMPTY_VERIFIER,
-        "metrics_enabled": False,
-        "llm_only": True,
-    }
-    history_key = log_history(payload, cached=False, latency_ms=total_ms, timings=timings)
-
-    return SimplifyResponse(
-        query=query,
-        age=age,
-        age_group=age_group,
-        mode=mode,
-        source_title="",
-        source_url="",
-        original_text="",
-        main_idea=simplified.main_idea,
-        simplified_text=simplified.simplified_text,
-        reasoning_steps=simplified.reasoning_steps,
-        learning_steps=simplified.learning_steps,
-        glossary=simplified.glossary,
-        analogies=simplified.analogies,
-        quiz=simplified.quiz,
-        theories=simplified.theories,
-        quality=quality,
-        accuracy=accuracy,
-        evaluation=_EMPTY_EVALUATION,
-        model=model,
-        verifier=_EMPTY_VERIFIER,
-        cached=False,
-        metrics_enabled=False,
-        llm_only=True,
-        timings_ms=timings,
-        history_key=history_key,
-    )
 
 
 def _build_search_hints(query: str, llm_result) -> list[str]:
@@ -431,59 +331,78 @@ async def simplify_pipeline(
     effective_model = model_id or settings.llm_model
     model = {"provider": settings.llm_provider, "name": effective_model}
 
-    # ── Step 1: LLM generates a preliminary answer from its own knowledge ─────
-    # This answer drives the article search and serves as fallback if no article
-    # matches well enough.
+    # ── Step 1: LLM answers the question directly from its own knowledge ────────
+    # The LLM answer IS the primary response. Ruwiki articles only add/verify
+    # specific facts (numbers, dates, scientific names) in a later enrichment step.
     _p0 = time.perf_counter()
     try:
-        _llm_prelim = await answer_without_article(query, age=age, mode=mode)
+        _llm_answer = await answer_without_article(query, age=age, mode=mode)
     except (LLMError, TimeoutError) as e:
-        logger.warning("preliminary LLM call failed (%s) — will search blindly", e)
-        _llm_prelim = None
-    timings["llm_preliminary"] = int((time.perf_counter() - _p0) * 1000)
+        logger.warning("LLM direct answer failed: %s", e)
+        raise ValueError("no_relevant_article") from e
+    timings["llm_answer"] = int((time.perf_counter() - _p0) * 1000)
 
-    # ── Step 2: Build search hints from query + entities the LLM mentioned ───
-    _hints = _build_search_hints(query, _llm_prelim)
-
-    # ── Step 3: Fetch articles for all hints in parallel ─────────────────────
+    # ── Step 2: Search Ruwiki for articles about things the LLM mentioned ────
+    # Using what the LLM said (proper nouns, glossary terms) as search hints gives
+    # us fact-checking material that's actually relevant to the answer.
+    _hints = _build_search_hints(query, _llm_answer)
     _f0 = time.perf_counter()
     _candidates = await _fetch_articles_parallel(_hints)
     timings["fetch_article"] = int((time.perf_counter() - _f0) * 1000)
 
-    # ── Step 4: Score each candidate against the LLM answer ──────────────────
-    article = None
-    _best_score = 0.0
-    if _llm_prelim and _candidates:
-        for _art in _candidates:
-            _sc = score_article_vs_llm(_llm_prelim.simplified_text, _art.title, _art.text)
-            if _sc > _best_score:
-                _best_score = _sc
-                article = _art
+    # ── Step 3: Sort articles by relevance to LLM answer ─────────────────────
+    _scored = sorted(
+        [
+            (score_article_vs_llm(_llm_answer.simplified_text, a.title, a.text), a)
+            for a in _candidates
+        ],
+        key=lambda x: x[0],
+        reverse=True,
+    )
+    _best_article = _scored[0][1] if _scored else None
+    _best_score = _scored[0][0] if _scored else 0.0
 
     logger.info(
-        "generate-then-retrieve: hints=%d candidates=%d best=%r score=%.3f (threshold=%.2f)",
+        "llm-primary search: hints=%d articles=%d best=%r score=%.3f",
         len(_hints), len(_candidates),
-        article.title if article else None,
-        _best_score, ARTICLE_ACCEPT_THRESHOLD,
+        _best_article.title if _best_article else None,
+        _best_score,
     )
 
-    # ── Step 5: Route based on article quality ────────────────────────────────
-    if article is None or _best_score < ARTICLE_ACCEPT_THRESHOLD:
-        # No article matched → the preliminary LLM answer is already the best we have
-        return await _llm_only_pipeline(
-            query, age, age_group, mode, model_id, timings, t0,
-            pre_generated=_llm_prelim,
-        )
+    # ── Step 4: Enrich the LLM answer with specific facts from articles ───────
+    # We always try to enrich when any article was found; articles are sorted by
+    # relevance so the most useful ones come first.
+    # Even low-scoring articles may contain one useful date or scientific name.
+    _article_excerpts = [(a.title, a.text) for _, a in _scored[:3]]
 
-    # ── Article won → full article-based simplification ───────────────────────
-    original_text = _mvp_article_slice(article.text)
-    key_facts = extract_key_facts(original_text)
+    _e0 = time.perf_counter()
+    if _article_excerpts:
+        simplified = await enrich_answer_with_articles(
+            question=query,
+            llm_answer=_llm_answer,
+            article_excerpts=_article_excerpts,
+            age=age,
+            mode=mode,
+        )
+    else:
+        simplified = _llm_answer
+    timings["simplify"] = int((time.perf_counter() - _e0) * 1000)
+
+    # ── Step 5: Source citation setup ─────────────────────────────────────────
+    # Cite the best-scoring article as the source even if it contributed little —
+    # the user asked us to always show where we looked.
+    article = _best_article
+    original_text = _mvp_article_slice(article.text) if article else ""
+    key_facts = extract_key_facts(original_text) if original_text else {}
+    is_llm_only = not bool(_candidates)  # True only when Ruwiki found nothing at all
+
     key = cache_key(
         query=query, age_group=age_group, mode=mode,
-        source_title=article.title, model_variant=model_variant(), key_facts=key_facts,
+        source_title=article.title if article else "",
+        model_variant=model_variant(), key_facts=key_facts,
     )
 
-    # Per-article SQLite cache check
+    # Per-result SQLite cache check
     cached_payload = get_sqlite_cached(key)
     if cached_payload:
         resp = _build_cached_response(cached_payload, age, age_group, mode, timings, t0)
@@ -491,9 +410,9 @@ async def simplify_pipeline(
             return resp
         cached_payload = None
 
-    # Vector lookup for similar originals (full metrics mode only)
+    # Vector lookup for similar originals (full metrics mode only, needs article text)
     sims = []
-    if settings.enable_vector_cache and enable_metrics:
+    if original_text and settings.enable_vector_cache and enable_metrics:
         _c0 = time.perf_counter()
         try:
             sims = get_similar_originals(original_text, top_k=1)
@@ -502,102 +421,53 @@ async def simplify_pipeline(
             timings["vector_lookup_failed"] = 1
         timings["vector_lookup"] = int((time.perf_counter() - _c0) * 1000)
 
-    # Summarize (full mode only)
-    summary: SummarizationResult = _EMPTY_SUMMARY
-    if enable_metrics:
-        _sum0 = time.perf_counter()
-        summary = await summarize_article(original_text, query)
-        timings["summarize_article"] = int((time.perf_counter() - _sum0) * 1000)
-        logger.info(
-            "summarize: %dms, %d→%d chars",
-            timings["summarize_article"], len(original_text), len(summary.condensed_text),
-        )
-
-    # Simplify — hand the LLM its own preliminary take as a quality anchor
-    _prelim_hint = ""
-    if _llm_prelim and _llm_prelim.main_idea:
-        _prelim_hint = (
-            f"LLM предварительно определил суть: «{_llm_prelim.main_idea}». "
-            "Уточни и дополни по тексту статьи, сохранив точность."
-        )
-
-    _s0 = time.perf_counter()
-    try:
-        simplified = await simplify_with_llm(
-            original_text, age=age, mode=mode,
-            key_facts=key_facts,
-            summary=summary if enable_metrics else None,
-            query=query,
-            retry_context=_prelim_hint,
-        )
-    except (LLMError, TimeoutError) as e:
-        logger.warning("LLM simplify failed: %s", e)
-        timings["llm_fallback"] = 1
-        simplified = _LocalResult(build_extractive_fallback(original_text, age=age, key_facts=key_facts))
-    timings["simplify"] = int((time.perf_counter() - _s0) * 1000)
+    summary: SummarizationResult = _EMPTY_SUMMARY  # no separate summarize step needed
 
     _apply_readability(simplified, age=age)
 
-    # --- Quality verification (full mode only) ---
+    # --- Quality check (LLM-first: no factual_consistency vs article — article is secondary) ---
     ver: dict = _EMPTY_VERIFIER
     evaluation: dict = _EMPTY_EVALUATION
     accuracy: dict = {}
 
-    if enable_metrics:
+    if enable_metrics and original_text:
+        # Light structural quality evaluation only — skip repair (article isn't primary source)
         v0 = time.perf_counter()
-        ver = factual_consistency(original_text, simplified.simplified_text)
-        timings["verify"] = int((time.perf_counter() - v0) * 1000)
         evaluation = evaluate_answer_quality(
             original_text,
             simplified.simplified_text,
             age=age,
-            consistency=ver,
+            consistency=_EMPTY_VERIFIER,
             key_facts=key_facts,
             analogies=simplified.analogies,
             glossary=simplified.glossary,
         )
-
-        # Repair if quality below threshold
-        if settings.enable_llm_repair and (ver["score"] < 0.80 or not evaluation["ok"]):
-            s1 = time.perf_counter()
-            missing = _missing_quality_anchors(evaluation, ver)
-            simplified2 = await repair_with_llm(original_text, simplified.simplified_text, age=age, missing=missing)
-            ver2 = factual_consistency(original_text, simplified2.simplified_text)
-            evaluation2 = evaluate_answer_quality(
-                original_text, simplified2.simplified_text, age=age,
-                consistency=ver2, key_facts=key_facts,
-                analogies=simplified2.analogies, glossary=simplified2.glossary,
-            )
-            timings["repair_simplify"] = int((time.perf_counter() - s1) * 1000)
-            if evaluation2.get("bleurt_proxy", 0) >= evaluation.get("bleurt_proxy", 0):
-                simplified = simplified2
-                _apply_readability(simplified, age=age)
-                ver = ver2
-                evaluation = evaluation2
-
-        evaluation = evaluate_answer_quality(
-            original_text, simplified.simplified_text, age=age,
-            consistency=ver, key_facts=key_facts,
-            analogies=simplified.analogies, glossary=simplified.glossary,
-        )
-        accuracy = _accuracy_report(ver)
-        # Update accuracy percent from bleurt_proxy (child-focused score)
+        timings["verify"] = int((time.perf_counter() - v0) * 1000)
         bp = float(evaluation.get("bleurt_proxy") or 0.0)
-        accuracy["score"] = round(bp, 4)
-        accuracy["percent"] = int(round(100 * bp))
+        accuracy = {
+            "metric_label": "ИИ + Ruwiki", "metric_key": "llm_primary",
+            "score": round(bp, 4), "percent": int(round(100 * bp)),
+        }
 
     quality = _quality_report(simplified.simplified_text, age=age, raw=simplified.raw)
 
     if not accuracy:
-        accuracy = {"metric_label": "Быстрый режим", "metric_key": "fast_mode", "score": 1.0, "percent": 100}
+        accuracy = {
+            "metric_label": "ИИ" if is_llm_only else "ИИ + Ruwiki",
+            "metric_key": "llm_primary",
+            "score": 1.0, "percent": 100,
+        }
+
+    _src_title = article.title if article else ""
+    _src_url = article.url if article else ""
 
     payload = {
         "query": query,
         "age": age,
         "age_group": age_group,
         "mode": mode,
-        "source_title": article.title,
-        "source_url": article.url,
+        "source_title": _src_title,
+        "source_url": _src_url,
         "original_text": original_text,
         "main_idea": simplified.main_idea,
         "simplified_text": simplified.simplified_text,
@@ -619,16 +489,17 @@ async def simplify_pipeline(
         "similar": sims,
         "summarization": _summary_to_dict(summary),
         "metrics_enabled": enable_metrics,
+        "llm_only": is_llm_only,
     }
 
-    # --- Persist to caches (only in full metrics mode with good quality) ---
+    # --- Persist to caches ---
     if enable_metrics:
         bleurt_proxy = float(evaluation.get("bleurt_proxy") or 0.0)
         quality_ok_for_cache = bleurt_proxy >= settings.quality_cache_threshold
 
-        if settings.enable_vector_cache:
+        if original_text and settings.enable_vector_cache:
             try:
-                upsert_original(original_text, meta={"key": key, "title": article.title, "url": article.url})
+                upsert_original(original_text, meta={"key": key, "title": _src_title, "url": _src_url})
             except Exception:
                 logger.exception("vector upsert failed")
 
@@ -639,7 +510,7 @@ async def simplify_pipeline(
                 upsert_answer_query(
                     query, age_group=age_group, key=key,
                     meta={
-                        "source_title": article.title[:180],
+                        "source_title": _src_title[:180],
                         "mode": mode,
                         "rouge_l": float(evaluation.get("rouge_l") or 0.0),
                         "bleurt_proxy": bleurt_proxy,
@@ -653,7 +524,6 @@ async def simplify_pipeline(
                 bleurt_proxy, settings.quality_cache_threshold,
             )
     else:
-        # Fast mode: still persist to SQLite so repeated exact requests use cache
         put_sqlite_cached(key, payload)
 
     if tok is not None:
@@ -668,8 +538,8 @@ async def simplify_pipeline(
         age=age,
         age_group=age_group,
         mode=mode,
-        source_title=article.title,
-        source_url=article.url,
+        source_title=_src_title,
+        source_url=_src_url,
         original_text=original_text,
         main_idea=simplified.main_idea,
         simplified_text=simplified.simplified_text,
