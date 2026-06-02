@@ -26,7 +26,7 @@ from app.services.llm import (
     model_variant,
 )
 from app.services.reflection import score_article_vs_llm
-from app.services.moderation import is_adult_content, _REFUSAL_TEXT
+from app.services.moderation import is_adult_content, is_gibberish, _REFUSAL_TEXT, _GIBBERISH_TEXT
 from app.services.simplifier import improve_child_readability
 from app.services.verifier import (
     evaluate_answer_quality,
@@ -309,8 +309,18 @@ async def simplify_pipeline(
     age_group = _age_group(age)
 
     # --- Content moderation (runs before any LLM/cache logic) ---
+    _blocked_idea: str | None = None
+    _blocked_text: str | None = None
     if is_adult_content(query):
-        logger.info("content_filter: blocked query age=%d", age)
+        logger.info("content_filter: adult content blocked age=%d", age)
+        _blocked_idea = "Этот вопрос не подходит для детской энциклопедии."
+        _blocked_text = _REFUSAL_TEXT
+    elif is_gibberish(query):
+        logger.info("content_filter: gibberish blocked query=%r", query[:60])
+        _blocked_idea = "Непонятный набор символов."
+        _blocked_text = _GIBBERISH_TEXT
+
+    if _blocked_text:
         _model = {"provider": settings.llm_provider, "name": model_id or settings.llm_model}
         _quality = {"ok": True, "issues": [], "sentence_count": 2, "word_count": 22,
                     "max_sentence_words": 15, "finish_reason": None}
@@ -319,8 +329,8 @@ async def simplify_pipeline(
         return SimplifyResponse(
             query=query, age=age, age_group=age_group, mode=mode,
             source_title="", source_url="", original_text="",
-            main_idea="Этот вопрос не подходит для детской энциклопедии.",
-            simplified_text=_REFUSAL_TEXT,
+            main_idea=_blocked_idea,
+            simplified_text=_blocked_text,
             reasoning_steps=[], learning_steps=[], glossary=[],
             analogies=[], quiz=[], theories=[],
             quality=_quality, accuracy=_accuracy, evaluation={},
