@@ -21,12 +21,13 @@ from app.services.ruwiki import fetch_article
 from app.services.llm import (
     LLMError,
     SummarizationResult,
-    answer_without_article,
-    enrich_answer_with_articles,
+    draft_answer,
+    synthesize_answer,
     model_variant,
 )
 from app.services.reflection import score_article_vs_llm
-from app.services.moderation import is_adult_content, is_gibberish, _REFUSAL_TEXT, _GIBBERISH_TEXT
+from app.services.moderation import is_gibberish, _REFUSAL_TEXT, _GIBBERISH_TEXT
+from app.services.llm_moderation import validate_query_with_llm
 from app.services.simplifier import improve_child_readability
 from app.services.verifier import (
     evaluate_answer_quality,
@@ -236,12 +237,11 @@ def _build_cached_response(
 
 
 
-def _build_search_hints(query: str, llm_result) -> list[str]:
+def _build_search_hints(query: str, llm_result=None) -> list[str]:
     """
     Build an ordered list of search queries.
-    Starts with the standard query variants, then appends proper nouns and key terms
-    that the LLM itself mentioned — pointing us toward the specific articles it knows
-    are relevant.
+    Starts with the standard query variants, then appends proper nouns extracted
+    from the draft text (or full LLMResult) to point at the most relevant articles.
     """
     from app.services.ruwiki import _extract_search_queries
 
@@ -250,9 +250,15 @@ def _build_search_hints(query: str, llm_result) -> list[str]:
     if llm_result is None:
         return hints
 
-    text = llm_result.simplified_text or ""
+    # Accept either a plain draft string or a full LLMResult
+    if isinstance(llm_result, str):
+        text = llm_result
+        glossary_items: list = []
+    else:
+        text = llm_result.simplified_text or ""
+        glossary_items = (llm_result.glossary or [])[:3]
 
-    # Proper nouns from the LLM text (e.g. "Криштиану Роналду", "Лионель Месси")
+    # Proper nouns from the draft/answer text (e.g. "Криштиану Роналду")
     proper_nouns = re.findall(r"\b[А-ЯЁ][а-яё]{3,}(?:\s+[А-ЯЁ][а-яё]{3,})*\b", text)
     seen_lower = {h.lower() for h in hints}
     for pn in proper_nouns[:4]:
@@ -260,8 +266,7 @@ def _build_search_hints(query: str, llm_result) -> list[str]:
             hints.append(pn)
             seen_lower.add(pn.lower())
 
-    # Glossary terms (e.g. "чёрная дыра", "гравитация")
-    for item in (llm_result.glossary or [])[:3]:
+    for item in glossary_items:
         term = (item.get("term") or "").strip()
         if term and len(term) >= 3 and term.lower() not in seen_lower:
             hints.append(term)
@@ -309,16 +314,19 @@ async def simplify_pipeline(
     age_group = _age_group(age)
 
     # --- Content moderation (runs before any LLM/cache logic) ---
+    # Fast gibberish check first (zero latency), then semantic LLM check.
     _blocked_idea: str | None = None
     _blocked_text: str | None = None
-    if is_adult_content(query):
-        logger.info("content_filter: adult content blocked age=%d", age)
-        _blocked_idea = "Этот вопрос не подходит для детской энциклопедии."
-        _blocked_text = _REFUSAL_TEXT
-    elif is_gibberish(query):
+    if is_gibberish(query):
         logger.info("content_filter: gibberish blocked query=%r", query[:60])
         _blocked_idea = "Непонятный набор символов."
         _blocked_text = _GIBBERISH_TEXT
+    else:
+        _llm_blocked, _llm_reason = await validate_query_with_llm(query)
+        if _llm_blocked:
+            logger.info("llm_moderation: blocked query=%r reason=%r", query[:60], _llm_reason)
+            _blocked_idea = "Этот вопрос не подходит для детской энциклопедии."
+            _blocked_text = _REFUSAL_TEXT
 
     if _blocked_text:
         _model = {"provider": settings.llm_provider, "name": model_id or settings.llm_model}
@@ -364,29 +372,25 @@ async def simplify_pipeline(
     effective_model = model_id or settings.llm_model
     model = {"provider": settings.llm_provider, "name": effective_model}
 
-    # ── Step 1: LLM answers the question directly from its own knowledge ────────
-    # The LLM answer IS the primary response. Ruwiki articles only add/verify
-    # specific facts (numbers, dates, scientific names) in a later enrichment step.
+    # ── Step 2: Draft answer (1-2 sentences) — anchors search and synthesis ──
     _p0 = time.perf_counter()
+    _draft = ""
     try:
-        _llm_answer = await answer_without_article(query, age=age, mode=mode)
-    except (LLMError, TimeoutError) as e:
-        logger.warning("LLM direct answer failed: %s", e)
-        raise ValueError("no_relevant_article") from e
-    timings["llm_answer"] = int((time.perf_counter() - _p0) * 1000)
+        _draft = await draft_answer(query, age=age)
+    except Exception as e:
+        logger.warning("draft_answer failed: %s", e)
+    timings["draft"] = int((time.perf_counter() - _p0) * 1000)
 
-    # ── Step 2: Search Ruwiki for articles about things the LLM mentioned ────
-    # Using what the LLM said (proper nouns, glossary terms) as search hints gives
-    # us fact-checking material that's actually relevant to the answer.
-    _hints = _build_search_hints(query, _llm_answer)
+    # ── Step 3: Build search queries from original question + draft ───────────
+    _hints = _build_search_hints(query, _draft or None)
     _f0 = time.perf_counter()
     _candidates = await _fetch_articles_parallel(_hints)
     timings["fetch_article"] = int((time.perf_counter() - _f0) * 1000)
 
-    # ── Step 3: Sort articles by relevance to LLM answer ─────────────────────
+    # ── Sort articles by relevance to the draft ────────────────────────────────
     _scored = sorted(
         [
-            (score_article_vs_llm(_llm_answer.simplified_text, a.title, a.text), a)
+            (score_article_vs_llm(_draft or query, a.title, a.text), a)
             for a in _candidates
         ],
         key=lambda x: x[0],
@@ -396,38 +400,46 @@ async def simplify_pipeline(
     _best_score = _scored[0][0] if _scored else 0.0
 
     logger.info(
-        "llm-primary search: hints=%d articles=%d best=%r score=%.3f",
+        "draft-then-retrieve: hints=%d articles=%d best=%r score=%.3f",
         len(_hints), len(_candidates),
         _best_article.title if _best_article else None,
         _best_score,
     )
 
-    # ── Step 4: Enrich the LLM answer with specific facts from articles ───────
-    # We always try to enrich when any article was found; articles are sorted by
-    # relevance so the most useful ones come first.
-    # Even low-scoring articles may contain one useful date or scientific name.
+    # ── Steps 5-7: Synthesize — draft + articles → full explanation ───────────
+    # Single LLM call: uses draft as seed, articles as factual context,
+    # applies age-appropriate language, generates analogies, self-validates.
     _article_excerpts = [(a.title, a.text) for _, a in _scored[:3]]
 
     _e0 = time.perf_counter()
-    if _article_excerpts:
-        simplified = await enrich_answer_with_articles(
-            question=query,
-            llm_answer=_llm_answer,
+    try:
+        simplified = await synthesize_answer(
+            query=query,
+            draft=_draft,
             article_excerpts=_article_excerpts,
             age=age,
             mode=mode,
         )
-    else:
-        simplified = _llm_answer
+    except (LLMError, TimeoutError) as e:
+        logger.warning("synthesize_answer failed: %s", e)
+        raise ValueError("no_relevant_article") from e
     timings["simplify"] = int((time.perf_counter() - _e0) * 1000)
 
     # ── Step 5: Source citation setup ─────────────────────────────────────────
-    # Cite the best-scoring article as the source even if it contributed little —
-    # the user asked us to always show where we looked.
-    article = _best_article
+    # Only cite an article as the source if it is clearly about the same topic.
+    # Low-scoring articles may be used for synthesis context but not shown as sources.
+    _SOURCE_MIN_SCORE = 0.30
+    if _best_article and _best_score < _SOURCE_MIN_SCORE:
+        logger.info(
+            "source suppressed: article=%r score=%.3f < %.2f",
+            _best_article.title, _best_score, _SOURCE_MIN_SCORE,
+        )
+        article = None
+    else:
+        article = _best_article
     original_text = _mvp_article_slice(article.text) if article else ""
     key_facts = extract_key_facts(original_text) if original_text else {}
-    is_llm_only = not bool(_candidates)  # True only when Ruwiki found nothing at all
+    is_llm_only = not bool(_candidates)
 
     key = cache_key(
         query=query, age_group=age_group, mode=mode,

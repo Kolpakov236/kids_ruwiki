@@ -157,13 +157,29 @@ body { background: var(--bg); color: var(--text); }
   font-weight: 600;
   text-align: left;
   cursor: pointer;
-  white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   overflow: hidden;
-  text-overflow: ellipsis;
   transition: background 0.15s, color 0.15s;
 }
+.sidebarChatTitle {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%;
+}
 .sidebarChatItem:hover { background: rgba(255,255,255,0.06); color: var(--text); }
-.sidebarChatItem.active { background: rgba(124,58,237,0.18); color: #a78bfa; }
+.sidebarChatItem.active {
+  background: rgba(124,58,237,0.18);
+  color: #a78bfa;
+  border-left: 2px solid var(--purple);
+  padding-left: 8px;
+}
+.sidebarChatCount {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text3);
+  white-space: nowrap;
+}
 .sidebarChatDel {
   flex-shrink: 0;
   width: 26px; height: 26px;
@@ -1071,3 +1087,214 @@ body { background: var(--bg); color: var(--text); }
 @media (max-width: 400px) {
   .modelBtn { padding: 6px 10px; font-size: 0.8rem; }
 }
+
+/* ============================================================
+   Age selection modal
+   ============================================================ */
+.ageCard { width: 100%; max-width: 400px; }
+
+.ageCardHeader {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 8px; margin-bottom: 28px;
+}
+.ageCardLogo {
+  width: 52px; height: 52px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  display: grid; place-items: center;
+  box-shadow: 0 8px 20px rgba(124,58,237,0.4);
+  margin-bottom: 4px;
+}
+.ageCardLogo .brandMark {
+  width: auto; height: auto; background: none;
+  font-size: 1.5rem; font-weight: 900; color: #fff;
+  display: block;
+}
+.ageModalTitle {
+  font-size: 1.5rem; font-weight: 900; color: var(--text);
+  margin: 0; text-align: center; line-height: 1.2;
+}
+.ageModalSub {
+  font-size: 0.9rem; color: var(--text3); text-align: center; margin: 0;
+}
+
+.ageOptions { display: flex; flex-direction: column; gap: 10px; }
+
+.ageOptionBtn {
+  display: flex; align-items: center; gap: 14px;
+  width: 100%;
+  padding: 16px 18px;
+  border: 2px solid transparent;
+  border-radius: 18px;
+  background: var(--bg3);
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.2s cubic-bezier(0.22,1,0.36,1),
+              box-shadow 0.2s, border-color 0.2s, background 0.2s;
+  position: relative; overflow: hidden;
+}
+/* Coloured shimmer on hover */
+.ageOptionBtn::before {
+  content: ""; position: absolute; inset: 0;
+  opacity: 0; transition: opacity 0.2s;
+  border-radius: inherit;
+}
+.ageOptionBtn:hover { transform: translateY(-3px); }
+
+/* 6–8 — green */
+.ageOptionBtn[data-age="7"] {
+  background: linear-gradient(135deg,rgba(34,197,94,0.10) 0%,rgba(16,185,129,0.05) 100%);
+  border-color: rgba(34,197,94,0.30);
+}
+.ageOptionBtn[data-age="7"]:hover {
+  border-color: #22c55e;
+  background: linear-gradient(135deg,rgba(34,197,94,0.18) 0%,rgba(16,185,129,0.10) 100%);
+  box-shadow: 0 10px 28px rgba(34,197,94,0.22);
+}
+.ageOptionBtn[data-age="7"] .ageOptionEmoji { background: rgba(34,197,94,0.15); }
+.ageOptionBtn[data-age="7"] .ageOptionLabel { color: #4ade80; }
+.ageOptionBtn[data-age="7"] .ageOptionArrow { color: #4ade80; }
+
+/* 9–11 — blue */
+.ageOptionBtn[data-age="10"] {
+  background: linear-gradient(135deg,rgba(56,189,248,0.10) 0%,rgba(59,130,246,0.05) 100%);
+  border-color: rgba(56,189,248,0.30);
+}
+.ageOptionBtn[data-age="10"]:hover {
+  border-color: #38bdf8;
+  background: linear-gradient(135deg,rgba(56,189,248,0.18) 0%,rgba(59,130,246,0.10) 100%);
+  box-shadow: 0 10px 28px rgba(56,189,248,0.22);
+}
+.ageOptionBtn[data-age="10"] .ageOptionEmoji { background: rgba(56,189,248,0.15); }
+.ageOptionBtn[data-age="10"] .ageOptionLabel { color: #7dd3fc; }
+.ageOptionBtn[data-age="10"] .ageOptionArrow { color: #7dd3fc; }
+
+/* 12–14 — purple */
+.ageOptionBtn[data-age="13"] {
+  background: linear-gradient(135deg,rgba(167,139,250,0.10) 0%,rgba(124,58,237,0.05) 100%);
+  border-color: rgba(167,139,250,0.30);
+}
+.ageOptionBtn[data-age="13"]:hover {
+  border-color: #a78bfa;
+  background: linear-gradient(135deg,rgba(167,139,250,0.18) 0%,rgba(124,58,237,0.10) 100%);
+  box-shadow: 0 10px 28px rgba(124,58,237,0.22);
+}
+.ageOptionBtn[data-age="13"] .ageOptionEmoji { background: rgba(167,139,250,0.15); }
+.ageOptionBtn[data-age="13"] .ageOptionLabel { color: #c4b5fd; }
+.ageOptionBtn[data-age="13"] .ageOptionArrow { color: #c4b5fd; }
+
+.ageOptionEmoji {
+  font-size: 1.9rem;
+  width: 50px; height: 50px;
+  display: grid; place-items: center;
+  border-radius: 14px;
+  flex-shrink: 0;
+  transition: transform 0.2s cubic-bezier(0.22,1,0.36,1);
+}
+.ageOptionBtn:hover .ageOptionEmoji { transform: scale(1.12) rotate(-4deg); }
+
+.ageOptionContent {
+  flex: 1; display: flex; flex-direction: column; gap: 2px;
+}
+.ageOptionLabel {
+  font-weight: 900; font-size: 1.05rem; line-height: 1.2;
+}
+.ageOptionSub { font-size: 0.8rem; color: var(--text3); font-weight: 500; }
+
+.ageOptionArrow {
+  font-size: 1.1rem; flex-shrink: 0;
+  transition: transform 0.2s cubic-bezier(0.22,1,0.36,1);
+  opacity: 0.8;
+}
+.ageOptionBtn:hover .ageOptionArrow { transform: translateX(5px); opacity: 1; }
+
+/* Age widget in sidebar */
+.ageWidget {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px;
+  background: rgba(124,58,237,0.08);
+  border-radius: 12px;
+  border: 1px solid rgba(124,58,237,0.2);
+}
+.ageWidgetIcon { font-size: 1.1rem; flex-shrink: 0; }
+.ageWidgetText { flex: 1; font-size: 0.83rem; font-weight: 700; color: var(--text2); }
+.changeAgeBtn {
+  border: none; background: transparent; color: var(--text3);
+  cursor: pointer; font-size: 0.85rem; padding: 2px 4px;
+  border-radius: 6px; transition: color 0.15s, background 0.15s;
+}
+.changeAgeBtn:hover { color: var(--text); background: rgba(255,255,255,0.08); }
+
+/* ============================================================
+   TTS player timeline
+   ============================================================ */
+.ttsWrap { display: flex; flex-direction: column; gap: 6px; }
+.ttsTimeline {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  min-width: 200px;
+}
+.ttsPauseBtn {
+  flex-shrink: 0;
+  width: 26px; height: 26px;
+  border: none; border-radius: 50%;
+  background: var(--purple); color: #fff;
+  font-size: 0.75rem; cursor: pointer;
+  display: grid; place-items: center;
+  transition: background 0.15s;
+}
+.ttsPauseBtn:hover { background: var(--purple2); }
+.ttsTrack {
+  flex: 1; height: 6px;
+  background: rgba(255,255,255,0.12);
+  border-radius: 3px; cursor: pointer;
+  position: relative; overflow: hidden;
+}
+.ttsFill {
+  height: 100%; width: 0%;
+  background: var(--purple);
+  border-radius: 3px;
+  transition: width 0.1s linear;
+  pointer-events: none;
+}
+.ttsTimeLabel {
+  flex-shrink: 0; font-size: 0.72rem; color: var(--text3);
+  font-variant-numeric: tabular-nums; min-width: 30px;
+}
+
+/* ============================================================
+   Quiz — multiple choice
+   ============================================================ */
+.quizChoices {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.quizChoiceBtn {
+  width: 100%; padding: 11px 14px;
+  border: 2px solid var(--border2);
+  border-radius: 12px;
+  background: var(--bg3); color: var(--text);
+  font: inherit; font-size: 0.92rem; font-weight: 700;
+  text-align: left; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.quizChoiceBtn:hover:not(:disabled) { border-color: var(--purple); background: rgba(124,58,237,0.08); }
+.quizChoiceBtn:disabled { cursor: default; }
+.quizChoiceBtn.correct { border-color: #22c55e; background: rgba(34,197,94,0.12); color: #86efac; }
+.quizChoiceBtn.wrong   { border-color: #ef4444; background: rgba(239,68,68,0.10); color: #fca5a5; }
+
+/* ============================================================
+   Glossary inline source link
+   ============================================================ */
+.msgGlossarySource {
+  margin-left: 5px;
+  font-size: 0.73rem; color: var(--text3);
+  text-decoration: none; opacity: 0.7;
+  transition: opacity 0.15s;
+}
+.msgGlossarySource:hover { opacity: 1; color: #93c5fd; }
+
+/* msgActions now sits above msgBody — change border */
+.msgActions { border-top: none; border-bottom: 1px solid var(--border); }

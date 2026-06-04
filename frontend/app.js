@@ -43,44 +43,36 @@ const LOADING_TIPS = [
 // App State
 // ---------------------------------------------------------------------------
 const state = {
-  user: null,          // { id, email, display_name, birth_date, avatar_url, age }
-  token: null,
-  chatId: null,
+  age: null,           // int: 7, 10 or 13 — loaded from localStorage
+  sessions: [],        // [{id, title, $nodes, msgCount}]
+  currentIdx: -1,      // index into sessions; -1 = no session yet
   currentPanel: "chat",
   enableMetrics: false,
   selectedModelId: "",
   recognition: null,
-  micPhase: "idle",        // "idle" | "listening" | "paused"
-  micAccumulated: "",      // text saved across recognition sessions
+  micPhase: "idle",
+  micAccumulated: "",
   statusTimer: null,
   progressTimer: null,
   game: null,
-  currentQuizItems: [],
 };
 
 // ---------------------------------------------------------------------------
-// Auth helpers
+// Age helpers
 // ---------------------------------------------------------------------------
-function getToken() {
-  return state.token || localStorage.getItem("rw_token");
+const AGE_LABELS = { 7: "6–8 лет", 10: "9–11 лет", 13: "12–14 лет" };
+
+function getStoredAge() {
+  const v = parseInt(localStorage.getItem("rw_age"), 10);
+  return [7, 10, 13].includes(v) ? v : null;
 }
 
-function setToken(token) {
-  state.token = token;
-  localStorage.setItem("rw_token", token);
+function setStoredAge(age) {
+  state.age = age;
+  localStorage.setItem("rw_age", String(age));
 }
 
-function clearAuth() {
-  state.token = null;
-  state.user = null;
-  state.chatId = null;
-  localStorage.removeItem("rw_token");
-}
-
-function authHeaders() {
-  const t = getToken();
-  return t ? { Authorization: `Bearer ${t}` } : {};
-}
+function authHeaders() { return {}; }
 
 // ---------------------------------------------------------------------------
 // Network
@@ -264,104 +256,30 @@ function addAssistantMessage(data) {
   const msgId = `msg_${Date.now()}`;
   $el.attr("id", msgId);
 
-  // LLM-only banner (no wiki article found)
+  // LLM-only banner
   if (data.llm_only) {
     $("<div>").addClass("msgLlmOnlyBanner")
       .text("Статьи в энциклопедии не нашлось — отвечает ИИ по своим знаниям")
       .appendTo($el);
   }
 
-  // Main idea
+  // "Кратко" header (was "Главная мысль")
   const $idea = $("<div>").addClass("msgMainIdea");
-  $("<div>").addClass("msgMainIdeaLabel").text("Главная мысль").appendTo($idea);
+  $("<div>").addClass("msgMainIdeaLabel").text("Кратко").appendTo($idea);
   $("<div>").addClass("msgMainIdeaText").text(data.main_idea || "").appendTo($idea);
   $el.append($idea);
 
-  // Body
-  const $body = $("<div>").addClass("msgBody");
-
-  // Explanation
-  const $expSec = $("<div>").addClass("msgSection");
-  $("<div>").addClass("msgSectionTitle").text("💡 Простое объяснение").appendTo($expSec);
-  const $text = $("<div>").addClass("msgText").appendTo($expSec);
-  $body.append($expSec);
-  typeText($text, data.simplified_text || "", data.cached ? 4 : 14);
-
-  // Analogies
-  if (data.analogies?.length) {
-    const $aSec = $("<div>").addClass("msgSection");
-    $("<div>").addClass("msgSectionTitle").text("🎯 Аналогии").appendTo($aSec);
-    const $aBox = $("<div>").addClass("msgAnalogies").appendTo($aSec);
-    const $ul = $("<ul>").appendTo($aBox);
-    data.analogies.forEach(a => $("<li>").text(a).appendTo($ul));
-    $body.append($aSec);
-  }
-
-  // Glossary
+  // Build full TTS text (all visible content combined)
+  const ttsParts = [];
+  if (data.main_idea) ttsParts.push(data.main_idea);
+  if (data.simplified_text) ttsParts.push(data.simplified_text);
+  if (data.analogies?.length) ttsParts.push("Примеры. " + data.analogies.join(". "));
   if (data.glossary?.length) {
-    const $gSec = $("<div>").addClass("msgSection");
-    $("<div>").addClass("msgSectionTitle").text("📖 Ключевые термины").appendTo($gSec);
-    const $gBox = $("<div>").addClass("msgGlossary").appendTo($gSec);
-    data.glossary.forEach(item => {
-      let def = item.definition || "";
-      // strip leading "Term — " or "Term: " if the LLM duplicated the term
-      const termPrefix = new RegExp("^" + item.term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*[-—–:]\\s*", "i");
-      def = def.replace(termPrefix, "");
-      // lowercase first letter of definition since it follows an em-dash
-      def = def.charAt(0).toLowerCase() + def.slice(1);
-      // capitalize first letter of the term
-      const term = item.term.charAt(0).toUpperCase() + item.term.slice(1);
-      $("<div>").addClass("msgGlossaryItem")
-        .append($("<span>").addClass("msgGlossaryTerm").text(term + " "))
-        .append(document.createTextNode("— " + def))
-        .appendTo($gBox);
-    });
-    $body.append($gSec);
+    ttsParts.push("Ключевые слова. " + data.glossary.map(g => g.term + ": " + g.definition).join(". "));
   }
+  const fullTtsText = ttsParts.join(" ");
 
-  // Theories
-  if (data.theories?.length) {
-    const $tSec = $("<div>").addClass("msgSection");
-    $("<div>").addClass("msgSectionTitle").text("🔭 Версии и теории").appendTo($tSec);
-    data.theories.forEach(t => {
-      const $card = $("<div>").addClass("msgTheoryCard");
-      $("<div>").addClass("msgTheoryTitle").text(t.title).appendTo($card);
-      $("<div>").addClass("msgTheoryText").text(t.text).appendTo($card);
-      $card.appendTo($tSec);
-    });
-    $body.append($tSec);
-  }
-
-  // Sources
-  const allSources = [];
-  if (data.source_url) {
-    allSources.push({ label: "📰 " + (data.source_title || "Источник"), href: data.source_url });
-  }
-  if (data.glossary?.length) {
-    data.glossary.slice(0,4).forEach(item => {
-      if (item.term) {
-        allSources.push({
-          label: item.term,
-          href: RUWIKI_BASE + encodeURIComponent(item.term),
-        });
-      }
-    });
-  }
-  if (allSources.length) {
-    const $sSec = $("<div>").addClass("msgSection");
-    $("<div>").addClass("msgSectionTitle").text("🔗 Источники").appendTo($sSec);
-    const $sRow = $("<div>").addClass("msgSources").appendTo($sSec);
-    allSources.forEach(s => {
-      $("<a>").addClass("msgSourceLink")
-        .attr({ href: s.href, target: "_blank", rel: "noreferrer" })
-        .text(s.label).appendTo($sRow);
-    });
-    $body.append($sSec);
-  }
-
-  $el.append($body);
-
-  // Actions bar
+  // ── Action bar (above message body) ──────────────────────────────────────
   const $actions = $("<div>").addClass("msgActions");
 
   if (data.quiz?.length) {
@@ -369,13 +287,21 @@ function addAssistantMessage(data) {
       .on("click", () => openQuiz(data.quiz)).appendTo($actions);
   }
 
-  $("<button>").addClass("msgActionBtn").text("🔊 Озвучить")
-    .on("click", function() {
-      speakWhenReady(data.simplified_text || "", $(this));
-    }).appendTo($actions);
+  // TTS button + timeline container
+  const $ttsWrap = $("<div>").addClass("ttsWrap").appendTo($actions);
+  const $ttsBtn = $("<button>").addClass("msgActionBtn ttsBtn").text("🔊 Озвучить").appendTo($ttsWrap);
+  const $timeline = $("<div>").addClass("ttsTimeline hidden").appendTo($ttsWrap);
+  const $pauseBtn = $("<button>").addClass("ttsPauseBtn").text("⏸").appendTo($timeline);
+  const $track = $("<div>").addClass("ttsTrack").appendTo($timeline);
+  const $fill = $("<div>").addClass("ttsFill").appendTo($track);
+  const $timeLabel = $("<span>").addClass("ttsTimeLabel").text("0:00").appendTo($timeline);
+
+  $ttsBtn.on("click", function() {
+    speakWithTimeline(fullTtsText, $ttsBtn, $timeline, $fill, $pauseBtn, $timeLabel);
+  });
 
   $("<button>").addClass("msgActionBtn").text("📋 Копировать")
-    .on("click", () => copyText(data.main_idea, data.simplified_text)).appendTo($actions);
+    .on("click", () => copyFullMessage(data)).appendTo($actions);
 
   // Rating stars
   const $rating = $("<div>").addClass("msgRating");
@@ -398,6 +324,84 @@ function addAssistantMessage(data) {
     });
   $actions.append($rating);
   $el.append($actions);
+
+  // ── Message body ──────────────────────────────────────────────────────────
+  const $body = $("<div>").addClass("msgBody");
+
+  // Explanation
+  const $expSec = $("<div>").addClass("msgSection");
+  $("<div>").addClass("msgSectionTitle").text("💡 Объяснение").appendTo($expSec);
+  const $text = $("<div>").addClass("msgText").appendTo($expSec);
+  $body.append($expSec);
+  typeText($text, data.simplified_text || "", data.cached ? 4 : 14);
+
+  // Analogies (was "Аналогии" → "Примеры")
+  if (data.analogies?.length) {
+    const $aSec = $("<div>").addClass("msgSection");
+    $("<div>").addClass("msgSectionTitle").text("🎯 Примеры").appendTo($aSec);
+    const $aBox = $("<div>").addClass("msgAnalogies").appendTo($aSec);
+    const $ul = $("<ul>").appendTo($aBox);
+    data.analogies.forEach(a => $("<li>").text(a).appendTo($ul));
+    $body.append($aSec);
+  }
+
+  // Glossary (was "Ключевые термины" → "Ключевые слова")
+  if (data.glossary?.length) {
+    const $gSec = $("<div>").addClass("msgSection");
+    $("<div>").addClass("msgSectionTitle").text("📖 Ключевые слова").appendTo($gSec);
+    const $gBox = $("<div>").addClass("msgGlossary").appendTo($gSec);
+    data.glossary.forEach(item => {
+      let def = item.definition || "";
+      const termPrefix = new RegExp("^" + item.term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*[-—–:]\\s*", "i");
+      def = def.replace(termPrefix, "");
+      def = def.charAt(0).toLowerCase() + def.slice(1);
+      const term = item.term.charAt(0).toUpperCase() + item.term.slice(1);
+      const $gItem = $("<div>").addClass("msgGlossaryItem")
+        .append($("<span>").addClass("msgGlossaryTerm").text(term + " "))
+        .append(document.createTextNode("— " + def));
+      // Source link for the term
+      const termHref = RUWIKI_BASE + encodeURIComponent(item.term);
+      $("<a>").addClass("msgGlossarySource").attr({ href: termHref, target: "_blank", rel: "noreferrer" })
+        .text("↗").appendTo($gItem);
+      $gItem.appendTo($gBox);
+    });
+    $body.append($gSec);
+  }
+
+  // Theories
+  if (data.theories?.length) {
+    const $tSec = $("<div>").addClass("msgSection");
+    $("<div>").addClass("msgSectionTitle").text("🔭 Версии и теории").appendTo($tSec);
+    data.theories.forEach(t => {
+      const $card = $("<div>").addClass("msgTheoryCard");
+      $("<div>").addClass("msgTheoryTitle").text(t.title).appendTo($card);
+      $("<div>").addClass("msgTheoryText").text(t.text).appendTo($card);
+      $card.appendTo($tSec);
+    });
+    $body.append($tSec);
+  }
+
+  // Sources — only the main article source (not per-term, those are inline above)
+  if (data.source_url) {
+    const $sSec = $("<div>").addClass("msgSection");
+    $("<div>").addClass("msgSectionTitle").text("🔗 Источник").appendTo($sSec);
+    const $sRow = $("<div>").addClass("msgSources").appendTo($sSec);
+    $("<a>").addClass("msgSourceLink")
+      .attr({ href: data.source_url, target: "_blank", rel: "noreferrer" })
+      .text("📰 " + (data.source_title || "Статья в Рувики")).appendTo($sRow);
+    $body.append($sSec);
+  }
+
+  $el.append($body);
+
+  // Track in current session
+  _ensureSession();
+  const _sess = state.sessions[state.currentIdx];
+  _sess.msgCount++;
+  if (_sess.title === "Новый чат" && data.query) {
+    _sess.title = data.query.slice(0, 48);
+  }
+  updateSessionSidebar();
 
   $("#messages").append($el);
   scrollMessages();
@@ -530,20 +534,45 @@ function renderQuizStep() {
   $("<div>").addClass("quizProgress").text(`Вопрос ${quiz.current+1} из ${quiz.items.length}`).appendTo($card);
   $("<p>").addClass("quizQuestion").text(item.question||"Вопрос").appendTo($card);
 
-  if (!quiz.revealed) {
-    $("<button>").addClass("quizRevealBtn").text("Показать ответ")
-      .on("click", ()=>{ quiz.revealed=true; renderQuizStep(); }).appendTo($card);
+  const choices = item.choices;
+  const correctAnswer = (item.answer || "").trim();
+
+  if (choices && choices.length >= 2) {
+    // Multiple-choice mode: show option buttons
+    const $opts = $("<div>").addClass("quizChoices").appendTo($card);
+    choices.forEach(choice => {
+      $("<button>").addClass("quizChoiceBtn").text(choice)
+        .on("click", function() {
+          const isCorrect = choice.trim() === correctAnswer ||
+                            correctAnswer.toLowerCase().includes(choice.trim().toLowerCase().slice(0, 12));
+          $(this).addClass(isCorrect ? "correct" : "wrong");
+          if (!isCorrect) {
+            $opts.find(".quizChoiceBtn").filter(function() {
+              return $(this).text().trim() === correctAnswer;
+            }).addClass("correct");
+          }
+          $opts.find(".quizChoiceBtn").prop("disabled", true);
+          if (isCorrect) quiz.score++;
+          setTimeout(() => { quiz.current++; renderQuizStep(); }, 1000);
+        }).appendTo($opts);
+    });
   } else {
-    $("<div>").addClass("quizAnswer pop-in")
-      .append($("<span>").addClass("quizAnswerLabel").text("Ответ: "))
-      .append(document.createTextNode(item.answer||""))
-      .appendTo($card);
-    const $row = $("<div>").addClass("quizSelfRow");
-    $("<button>").addClass("quizSelfBtn correct").text("✓ Знал!")
-      .on("click",()=>{ quiz.score++; quiz.current++; quiz.revealed=false; renderQuizStep(); }).appendTo($row);
-    $("<button>").addClass("quizSelfBtn wrong").text("✗ Не знал")
-      .on("click",()=>{ quiz.current++; quiz.revealed=false; renderQuizStep(); }).appendTo($row);
-    $card.append($row);
+    // Fallback: reveal-answer mode
+    if (!quiz.revealed) {
+      $("<button>").addClass("quizRevealBtn").text("Показать ответ")
+        .on("click", ()=>{ quiz.revealed=true; renderQuizStep(); }).appendTo($card);
+    } else {
+      $("<div>").addClass("quizAnswer pop-in")
+        .append($("<span>").addClass("quizAnswerLabel").text("Ответ: "))
+        .append(document.createTextNode(correctAnswer))
+        .appendTo($card);
+      const $row = $("<div>").addClass("quizSelfRow");
+      $("<button>").addClass("quizSelfBtn correct").text("✓ Знал!")
+        .on("click",()=>{ quiz.score++; quiz.current++; quiz.revealed=false; renderQuizStep(); }).appendTo($row);
+      $("<button>").addClass("quizSelfBtn wrong").text("✗ Не знал")
+        .on("click",()=>{ quiz.current++; quiz.revealed=false; renderQuizStep(); }).appendTo($row);
+      $card.append($row);
+    }
   }
   $c.append($card);
 }
@@ -574,10 +603,16 @@ async function submitRating(historyKey, stars) {
 }
 
 // ---------------------------------------------------------------------------
-// Speech — server-side neural TTS (edge-tts, ru-RU-SvetlanaNeural)
+// Speech — server-side neural TTS with timeline
 // ---------------------------------------------------------------------------
 let _ttsAudio = null;
-let _ttsController = null;  // AbortController for in-flight fetch
+let _ttsController = null;
+let _ttsTimerRAF = null;
+let _activeTtsBtn = null;
+let _activeTtsTimeline = null;
+let _activeTtsFill = null;
+let _activeTtsLabel = null;
+let _activeTtsPauseBtn = null;
 
 function _stripEmoji(text) {
   return text
@@ -586,29 +621,67 @@ function _stripEmoji(text) {
     .trim();
 }
 
+function _fmtTime(s) {
+  const m = Math.floor(s / 60);
+  return `${m}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+}
+
 function _stopTts() {
   if (_ttsController) { _ttsController.abort(); _ttsController = null; }
   if (_ttsAudio) { _ttsAudio.pause(); _ttsAudio.src = ""; _ttsAudio = null; }
+  if (_ttsTimerRAF) { cancelAnimationFrame(_ttsTimerRAF); _ttsTimerRAF = null; }
+  if (_activeTtsBtn) { _activeTtsBtn.removeClass("speaking").text("🔊 Озвучить"); _activeTtsBtn = null; }
+  if (_activeTtsTimeline) { _activeTtsTimeline.addClass("hidden"); _activeTtsTimeline = null; }
+  _activeTtsFill = null; _activeTtsLabel = null; _activeTtsPauseBtn = null;
 }
 
-async function speakWhenReady(text, $btn) {
+function _updateTtsTimeline() {
+  if (!_ttsAudio || !_activeTtsFill) return;
+  const pct = _ttsAudio.duration ? (_ttsAudio.currentTime / _ttsAudio.duration) * 100 : 0;
+  _activeTtsFill.css("width", pct + "%");
+  if (_activeTtsLabel) _activeTtsLabel.text(_fmtTime(_ttsAudio.currentTime));
+  if (!_ttsAudio.paused && !_ttsAudio.ended) {
+    _ttsTimerRAF = requestAnimationFrame(_updateTtsTimeline);
+  }
+}
+
+async function speakWithTimeline(text, $btn, $timeline, $fill, $pauseBtn, $timeLabel) {
   if (!text) return;
 
-  // Toggle: if already loading or playing — stop and return
-  if ($btn && $btn.hasClass("speaking")) {
+  // If same button already speaking — stop
+  if ($btn.hasClass("speaking")) {
     _stopTts();
-    $btn.removeClass("speaking").text("🔊 Озвучить");
     return;
   }
 
-  // Cancel any leftover request before starting a new one
+  // Stop any other playback first
   _stopTts();
 
-  if ($btn) $btn.addClass("speaking").text("⏹ Стоп");
+  $btn.addClass("speaking").text("⏹ Стоп");
+  _activeTtsBtn = $btn;
+  _activeTtsTimeline = $timeline;
+  _activeTtsFill = $fill;
+  _activeTtsLabel = $timeLabel;
+  _activeTtsPauseBtn = $pauseBtn;
 
   const controller = new AbortController();
   _ttsController = controller;
   const cleanText = _stripEmoji(text);
+
+  $pauseBtn.off("click").on("click", () => {
+    if (!_ttsAudio) return;
+    if (_ttsAudio.paused) { _ttsAudio.play(); $pauseBtn.text("⏸"); _updateTtsTimeline(); }
+    else { _ttsAudio.pause(); $pauseBtn.text("▶"); }
+  });
+
+  // Seek on track click
+  $timeline.find(".ttsTrack").off("click").on("click", function(e) {
+    if (!_ttsAudio || !_ttsAudio.duration) return;
+    const rect = this.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    _ttsAudio.currentTime = ratio * _ttsAudio.duration;
+    _updateTtsTimeline();
+  });
 
   try {
     const res = await fetch(BACKEND_URL + "/tts", {
@@ -620,43 +693,94 @@ async function speakWhenReady(text, $btn) {
 
     if (!res.ok) throw new Error("tts_http_" + res.status);
     const blob = await res.blob();
-
-    // Abort was called while fetch was in flight — do not play
     if (_ttsController !== controller) return;
 
     const url = URL.createObjectURL(blob);
     _ttsController = null;
     _ttsAudio = new Audio(url);
+
+    _ttsAudio.oncanplay = () => {
+      $timeline.removeClass("hidden");
+      _updateTtsTimeline();
+    };
     _ttsAudio.onended = _ttsAudio.onerror = () => {
       URL.revokeObjectURL(url);
-      _ttsAudio = null;
-      if ($btn) $btn.removeClass("speaking").text("🔊 Озвучить");
+      _stopTts();
     };
     _ttsAudio.play();
 
   } catch (e) {
-    if (e.name === "AbortError") return;  // user pressed stop — button already reset
+    if (e.name === "AbortError") return;
     console.warn("TTS failed, falling back to browser voice:", e);
-    if ($btn) $btn.removeClass("speaking").text("🔊 Озвучить");
-    // Graceful fallback to Web Speech API
+    $btn.removeClass("speaking").text("🔊 Озвучить");
+    _activeTtsBtn = null;
     const u = new SpeechSynthesisUtterance(cleanText);
     u.lang = "ru-RU"; u.rate = 0.87;
     const ruVoice = window.speechSynthesis.getVoices().find(v => v.lang.startsWith("ru") && v.localService);
     if (ruVoice) u.voice = ruVoice;
-    if ($btn) {
-      $btn.addClass("speaking").text("⏹ Стоп");
-      u.onend = u.onerror = () => $btn.removeClass("speaking").text("🔊 Озвучить");
-    }
+    $btn.addClass("speaking").text("⏹ Стоп");
+    _activeTtsBtn = $btn;
+    u.onend = u.onerror = () => { $btn.removeClass("speaking").text("🔊 Озвучить"); _activeTtsBtn = null; };
     window.speechSynthesis.speak(u);
   }
 }
 
-async function copyText(mainIdea, text) {
+// Keep legacy alias used by external callers
+function speakWhenReady(text, $btn) {
+  speakWithTimeline(text, $btn,
+    $btn.closest(".ttsWrap").find(".ttsTimeline"),
+    $btn.closest(".ttsWrap").find(".ttsFill"),
+    $btn.closest(".ttsWrap").find(".ttsPauseBtn"),
+    $btn.closest(".ttsWrap").find(".ttsTimeLabel"),
+  );
+}
+
+async function copyFullMessage(data) {
+  const parts = [];
+
+  if (data.main_idea) {
+    parts.push("── Кратко ──");
+    parts.push(data.main_idea);
+    parts.push("");
+  }
+
+  if (data.simplified_text) {
+    parts.push("── Объяснение ──");
+    parts.push(data.simplified_text);
+    parts.push("");
+  }
+
+  if (data.analogies?.length) {
+    parts.push("── Примеры ──");
+    data.analogies.forEach(a => parts.push("• " + a));
+    parts.push("");
+  }
+
+  if (data.glossary?.length) {
+    parts.push("── Ключевые слова ──");
+    data.glossary.forEach(g => parts.push(`${g.term} — ${g.definition}`));
+    parts.push("");
+  }
+
+  if (data.theories?.length) {
+    parts.push("── Версии и теории ──");
+    data.theories.forEach(t => parts.push(`${t.title}: ${t.text}`));
+    parts.push("");
+  }
+
+  if (data.source_title && data.source_url) {
+    parts.push("── Источник ──");
+    parts.push(`${data.source_title}: ${data.source_url}`);
+  }
+
+  const fullText = parts.join("\n").trim();
   try {
-    await navigator.clipboard.writeText([mainIdea, "", text].join("\n"));
+    await navigator.clipboard.writeText(fullText);
     setStatus("Скопировано в буфер обмена.");
-    setTimeout(()=>setStatus(""), 2000);
-  } catch { setStatus("Браузер не разрешил копирование."); }
+    setTimeout(() => setStatus(""), 2000);
+  } catch {
+    setStatus("Браузер не разрешил копирование.");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -666,12 +790,10 @@ async function doSimplify() {
   const query = $("#query").val().trim();
   if (!query) { setStatus("Введите тему или вопрос."); return; }
 
-  // Create a new chat lazily on the first message of a session
-  if (state.user && !state.chatId) {
-    await createNewChat();
-  }
+  // Ensure age is selected
+  if (!state.age) { openAgeModal(); return; }
 
-  const age = state.user?.age || 10;
+  const age = state.age;
   const mode = "balanced";
 
   addUserMessage(query);
@@ -716,7 +838,6 @@ async function doSimplify() {
     setTimeout(()=>setStatus(""),3000);
     switchPanel("chat");
     addAssistantMessage(data);
-    if (state.user) loadSidebarChats();
   } catch(e) {
     setBusy(false, `Ошибка: ${e.message}`);
     console.error(e);
@@ -724,238 +845,155 @@ async function doSimplify() {
 }
 
 // ---------------------------------------------------------------------------
-// Auth UI
+// Age UI
 // ---------------------------------------------------------------------------
-function openAuthModal(tab="login") {
-  showAuthTab(tab);
-  $("#authModal").removeClass("hidden");
-  setTimeout(()=>$("#loginEmail,#regEmail").first().trigger("focus"),100);
+function openAgeModal() {
+  $("#ageModal").removeClass("hidden");
 }
 
-function closeAuthModal() { $("#authModal").addClass("hidden"); }
-
-function showAuthTab(tab) {
-  $(".authTab").removeClass("active").filter(`[data-tab="${tab}"]`).addClass("active");
-  $(".authForm").addClass("hidden");
-  $(`#${tab}Form`).removeClass("hidden");
+function closeAgeModal() {
+  if (state.age) $("#ageModal").addClass("hidden");
 }
 
-async function doLogin(e) {
-  e.preventDefault();
-  const email = $("#loginEmail").val().trim();
-  const password = $("#loginPassword").val();
-  $("#loginError").addClass("hidden");
-  try {
-    const res = await apiFetch("/auth/login", { method:"POST", body:JSON.stringify({email,password}) });
-    const data = await res.json();
-    if (!res.ok) { $("#loginError").removeClass("hidden").text(data.detail||"Ошибка входа"); return; }
-    setToken(data.access_token);
-    state.user = data.user;
-    closeAuthModal();
-    afterLogin();
-  } catch(err) {
-    $("#loginError").removeClass("hidden").text(err.message);
-  }
+function doSelectAge(age) {
+  setStoredAge(age);
+  renderAgeWidget();
+  closeAgeModal();
 }
 
-async function doRegister(e) {
-  e.preventDefault();
-  const email = $("#regEmail").val().trim();
-  const display_name = $("#regName").val().trim();
-  const birth_date = $("#regBirthDate").val() || null;
-  const password = $("#regPassword").val();
-  $("#registerError").addClass("hidden");
-  try {
-    const res = await apiFetch("/auth/register", { method:"POST", body:JSON.stringify({email,display_name,birth_date,password}) });
-    const data = await res.json();
-    if (!res.ok) { $("#registerError").removeClass("hidden").text(data.detail||"Ошибка регистрации"); return; }
-    setToken(data.access_token);
-    state.user = data.user;
-    closeAuthModal();
-    afterLogin();
-  } catch(err) {
-    $("#registerError").removeClass("hidden").text(err.message);
-  }
-}
-
-function renderUserWidget() {
-  const $w = $("#userWidget").empty();
-  if (!state.user) {
-    $("<button>").addClass("loginBtn").attr("id","loginBtn").text("Войти")
-      .on("click",()=>openAuthModal()).appendTo($w);
-    return;
-  }
-  const u = state.user;
-  const initials = (u.display_name||u.email||"?").slice(0,1).toUpperCase();
-  const $av = $("<div>").addClass("userAvatar");
-  if (u.avatar_url) {
-    $("<img>").addClass("avatarImg").attr({src:u.avatar_url,alt:u.display_name}).appendTo($av);
-  } else {
-    $("<div>").addClass("avatarPlaceholder").text(initials).appendTo($av);
-  }
-  $("<span>").text(u.display_name||u.email||"").appendTo($av);
-  $av.appendTo($w);
-  $("<button>").addClass("logoutBtn").text("Выйти")
-    .on("click", doLogout).appendTo($w);
-}
-
-function doLogout() {
-  clearAuth();
-  renderUserWidget();
-  updateSidebarChats([]);
-  setStatus("Вы вышли из аккаунта.");
-  setTimeout(()=>setStatus(""),2000);
-}
-
-async function loadCurrentUser() {
-  const token = getToken();
-  if (!token) return;
-  try {
-    const res = await apiFetch("/auth/me", {}, 8000);
-    if (!res.ok) { clearAuth(); return; }
-    state.user = await res.json();
-    state.token = token;
-  } catch { clearAuth(); }
-}
-
-async function afterLogin() {
-  renderUserWidget();
-  await loadSidebarChats();
+function renderAgeWidget() {
+  const label = AGE_LABELS[state.age] || "—";
+  $("#ageDisplay").text(label);
 }
 
 // ---------------------------------------------------------------------------
-// OAuth token from URL hash
+// Multi-session chat management
 // ---------------------------------------------------------------------------
-function checkOAuthToken() {
-  const hash = window.location.hash;
-  if (!hash) return;
-  const params = new URLSearchParams(hash.slice(1));
-  const token = params.get("token");
-  const err = params.get("auth_error");
-  if (token) {
-    setToken(token);
-    history.replaceState(null, "", window.location.pathname);
-    loadCurrentUser().then(()=>{ renderUserWidget(); loadSidebarChats(); });
-  } else if (err) {
-    setStatus("Ошибка авторизации: " + err);
-    history.replaceState(null, "", window.location.pathname);
+
+function _ensureSession() {
+  if (state.currentIdx === -1 || state.currentIdx >= state.sessions.length) {
+    state.sessions.push({ id: Date.now(), title: "Новый чат", $nodes: $(), msgCount: 0 });
+    state.currentIdx = state.sessions.length - 1;
   }
 }
 
-// ---------------------------------------------------------------------------
-// Chats
-// ---------------------------------------------------------------------------
 function newChat() {
-  state.chatId = null;
+  // Detach and save current session's DOM nodes (preserves event handlers)
+  if (state.currentIdx >= 0 && state.currentIdx < state.sessions.length) {
+    const curr = state.sessions[state.currentIdx];
+    curr.$nodes = curr.$nodes.add($("#messages").children().detach());
+    // Drop empty sessions (user clicked "new chat" without asking anything)
+    if (curr.msgCount === 0) {
+      state.sessions.splice(state.currentIdx, 1);
+      state.currentIdx = -1;
+    }
+  }
+
+  // Create and switch to new session
+  state.sessions.push({ id: Date.now(), title: "Новый чат", $nodes: $(), msgCount: 0 });
+  state.currentIdx = state.sessions.length - 1;
+
   $("#messages").empty();
   $("#welcomeScreen").removeClass("hidden");
-  $(".sidebarChatItem").removeClass("active");
+  updateSessionSidebar();
   switchPanel("chat");
 }
 
-async function createNewChat() {
-  if (!state.user) return;
-  try {
-    const res = await apiFetch("/chats", { method: "POST" }, 8000);
-    if (!res.ok) return;
-    const data = await res.json();
-    state.chatId = data.chat_id;
-  } catch {}
+function switchSession(idx) {
+  if (idx === state.currentIdx) { switchPanel("chat"); return; }
+  if (idx < 0 || idx >= state.sessions.length) return;
+
+  // Save current session
+  if (state.currentIdx >= 0 && state.currentIdx < state.sessions.length) {
+    const curr = state.sessions[state.currentIdx];
+    curr.$nodes = curr.$nodes.add($("#messages").children().detach());
+  }
+
+  // Restore target session
+  state.currentIdx = idx;
+  const target = state.sessions[idx];
+  $("#messages").empty();
+  if (target.$nodes && target.$nodes.length) {
+    $("#messages").append(target.$nodes);
+    $("#welcomeScreen").addClass("hidden");
+    scrollMessages();
+  } else {
+    $("#welcomeScreen").removeClass("hidden");
+  }
+
+  updateSessionSidebar();
+  switchPanel("chat");
 }
 
-async function deleteChat(chatId) {
-  try {
-    const res = await apiFetch(`/chats/${chatId}`, { method: "DELETE" }, 8000);
-    if (!res.ok) return;
-    if (state.chatId === chatId) {
-      state.chatId = null;
-      $("#messages").empty();
+function deleteSession(idx) {
+  if (idx < 0 || idx >= state.sessions.length) return;
+  const deletingCurrent = (idx === state.currentIdx);
+
+  state.sessions.splice(idx, 1);
+
+  if (!state.sessions.length) {
+    state.currentIdx = -1;
+    $("#messages").empty();
+    $("#welcomeScreen").removeClass("hidden");
+  } else if (deletingCurrent) {
+    state.currentIdx = Math.min(idx, state.sessions.length - 1);
+    const target = state.sessions[state.currentIdx];
+    $("#messages").empty();
+    if (target.$nodes && target.$nodes.length) {
+      $("#messages").append(target.$nodes);
+      $("#welcomeScreen").addClass("hidden");
+    } else {
       $("#welcomeScreen").removeClass("hidden");
     }
-    await loadSidebarChats();
-  } catch {}
+  } else if (idx < state.currentIdx) {
+    state.currentIdx--;
+  }
+
+  updateSessionSidebar();
 }
 
-async function loadSidebarChats() {
-  if (!state.user) { updateSidebarChats([]); return; }
-  try {
-    const res = await apiFetch("/chats", {}, 8000);
-    if (!res.ok) return;
-    const chats = await res.json();
-    updateSidebarChats(chats);
-  } catch {}
-}
-
-function updateSidebarChats(chats) {
+function updateSessionSidebar() {
   const $list = $("#sidebarChatsList").empty();
-  if (!state.user || !chats.length) {
-    $("<p>").addClass("sidebarChatsEmpty")
-      .text(state.user ? "Нет сохранённых чатов" : "Войдите, чтобы сохранять историю")
-      .appendTo($list);
+
+  const visible = state.sessions.filter((s, i) => s.msgCount > 0 || i === state.currentIdx);
+  if (!visible.length) {
+    $("<p>").addClass("sidebarChatsEmpty").text("Нет сохранённых чатов").appendTo($list);
     return;
   }
-  chats.forEach(chat => {
+
+  // Show newest first
+  for (let i = state.sessions.length - 1; i >= 0; i--) {
+    const sess = state.sessions[i];
+    if (sess.msgCount === 0 && i !== state.currentIdx) continue;
+
     const $row = $("<div>").addClass("sidebarChatRow");
-    $("<button>").addClass("sidebarChatItem")
-      .toggleClass("active", chat.id === state.chatId)
-      .text(chat.title || "Чат")
-      .attr("title", chat.title)
-      .on("click", ()=>openChat(chat.id))
-      .appendTo($row);
-    $("<button>").addClass("sidebarChatDel").attr("title","Удалить чат").html("&times;")
-      .on("click", e=>{ e.stopPropagation(); deleteChat(chat.id); })
-      .appendTo($row);
-    $row.appendTo($list);
-  });
-  // Also update full panel
-  renderChatsPanel(chats);
-}
 
-function renderChatsPanel(chats) {
-  const $list = $("#chatsListFull").empty();
-  if (!chats.length) {
-    $("<p>").css("color","#94a3b8").text("Нет сохранённых чатов. Начните разговор!").appendTo($list);
-    return;
+    const $btn = $("<button>")
+      .addClass("sidebarChatItem")
+      .toggleClass("active", i === state.currentIdx)
+      .attr("title", sess.title)
+      .on("click", () => switchSession(i));
+
+    $("<span>").addClass("sidebarChatTitle").text(sess.title).appendTo($btn);
+    if (sess.msgCount > 0) {
+      const countWord = sess.msgCount === 1 ? "сообщение"
+        : sess.msgCount < 5 ? "сообщения" : "сообщений";
+      $("<span>").addClass("sidebarChatCount")
+        .text(sess.msgCount + " " + countWord)
+        .appendTo($btn);
+    }
+
+    $("<button>").addClass("sidebarChatDel").html("&times;")
+      .attr("title", "Удалить чат")
+      .on("click", e => { e.stopPropagation(); deleteSession(i); })
+      .appendTo($row);
+
+    $row.prepend($btn);
+    $list.append($row);
   }
-  chats.forEach(chat => {
-    const d = new Date(chat.last_message_at);
-    const dateStr = d.toLocaleDateString("ru-RU",{day:"2-digit",month:"short"});
-    const $card = $("<div>").addClass("chatListCard")
-      .append($("<span>").addClass("chatListIcon").text("💬"))
-      .append(
-        $("<div>").addClass("chatListInfo")
-          .append($("<div>").addClass("chatListTitle").text(chat.title||"Чат"))
-          .append($("<div>").addClass("chatListDate").text(dateStr))
-      )
-      .on("click", e=>{ if (!$(e.target).closest(".chatListDel").length){ openChat(chat.id); switchPanel("chat"); } });
-    $("<button>").addClass("chatListDel").attr("title","Удалить чат").text("🗑")
-      .on("click", e=>{ e.stopPropagation(); deleteChat(chat.id); })
-      .appendTo($card);
-    $card.appendTo($list);
-  });
 }
 
-async function openChat(chatId) {
-  if (!state.user) return;
-  state.chatId = chatId;
-  try {
-    const res = await apiFetch(`/chats/${chatId}`, {}, 10000);
-    if (!res.ok) return;
-    const messages = await res.json();
-    // Render chat history
-    $("#messages").empty();
-    $("#welcomeScreen").addClass("hidden");
-    messages.forEach(msg => {
-      if (msg.role === "assistant" && msg.response?.main_idea) {
-        addUserMessage(msg.query);
-        addAssistantMessage(msg.response);
-      }
-    });
-    // Update sidebar active state
-    $(".sidebarChatItem").removeClass("active");
-    $(`.sidebarChatItem`).filter(function(){ return $(this).text().trim() === (messages[0]?.query||"").slice(0,60); }).addClass("active");
-  } catch {}
-}
+function renderOAuthButtons() {}
 
 // ---------------------------------------------------------------------------
 // Health check & model setup
@@ -1138,16 +1176,19 @@ function autoGrow(el) {
 // Bootstrap
 // ---------------------------------------------------------------------------
 $(async function () {
-  // Resolve backend URL before any requests
+  // ── Age handlers bound FIRST — before any await so clicks work immediately ──
+  $(document).on("click", ".ageOptionBtn", function () {
+    doSelectAge(Number($(this).data("age")));
+  });
+  $("#ageModal").on("click", e => { if (e.target === e.currentTarget) closeAgeModal(); });
+  $("#changeAgeBtn").on("click", openAgeModal);
+
+  // Restore age and show modal if not set
+  state.age = getStoredAge();
+  renderAgeWidget();
+  if (!state.age) openAgeModal();
+
   await detectBackend();
-
-  checkOAuthToken();
-  await loadCurrentUser();
-  renderUserWidget();
-
-  if (state.user) {
-    await loadSidebarChats();
-  }
 
   checkHealth();
   setupSpeech();
@@ -1243,25 +1284,19 @@ $(async function () {
   $(document).on("click", ()=>$("#modelDropdown").addClass("hidden"));
   $("#modelDropdown").on("click", e=>e.stopPropagation());
 
-  // Auth modal
-  $("#loginBtn, #userWidget").on("click", ".loginBtn", ()=>openAuthModal());
-  $("#authModalClose").on("click", closeAuthModal);
-  $("#authModal").on("click", e=>{ if(e.target===e.currentTarget) closeAuthModal(); });
-  $(".authTab").on("click", function(){ showAuthTab($(this).data("tab")); });
-  $("#loginForm").on("submit", doLogin);
-  $("#registerForm").on("submit", doRegister);
-
-  // VK / Yandex OAuth
-  $("#vkBtn").on("click", ()=>{ window.location.href = BACKEND_URL + "/auth/vk"; });
-  $("#yandexBtn").on("click", ()=>{ window.location.href = BACKEND_URL + "/auth/yandex"; });
-
   // Quiz modal
   $("#quizModalClose").on("click", ()=>$("#quizModal").addClass("hidden"));
   $("#quizModal").on("click", e=>{ if(e.target===e.currentTarget) $("#quizModal").addClass("hidden"); });
 
-  // ── Sidebar footer buttons ──────────────────────────────────────────────
-  $("#sidebarLogoutBtn").on("click", ()=>{
-    doLogout();
+  // Sidebar footer
+  $("#clearHistoryBtn").on("click", ()=>{
+    if (!confirm("Удалить все чаты сеанса?")) return;
+    state.sessions = [];
+    state.currentIdx = -1;
+    $("#messages").empty();
+    $("#welcomeScreen").removeClass("hidden");
+    updateSessionSidebar();
+    switchPanel("chat");
     if (window.innerWidth<=640) closeMobileSidebar();
   });
 
@@ -1270,28 +1305,10 @@ $(async function () {
     if (window.innerWidth<=640) closeMobileSidebar();
   });
 
-
-  $("#deleteAllChatsBtn").on("click", async ()=>{
-    if (!state.user) { openAuthModal(); return; }
-    if (!confirm("Удалить все чаты? Это действие необратимо.")) return;
-    try {
-      const res = await apiFetch("/chats", {}, 8000);
-      if (!res.ok) return;
-      const chats = await res.json();
-      await Promise.all(chats.map(c => apiFetch(`/chats/${c.id}`, { method:"DELETE" }, 5000)));
-      state.chatId = null;
-      $("#messages").empty();
-      $("#welcomeScreen").removeClass("hidden");
-      updateSidebarChats([]);
-      switchPanel("chat");
-    } catch {}
-    if (window.innerWidth<=640) closeMobileSidebar();
-  });
-
   // Escape closes modals
   $(document).on("keydown", e=>{
     if (e.key==="Escape") {
-      closeAuthModal();
+      closeAgeModal();
       $("#quizModal").addClass("hidden");
       $("#modelDropdown").addClass("hidden");
     }

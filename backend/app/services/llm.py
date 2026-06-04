@@ -148,19 +148,26 @@ def _age_instructions(age: int) -> str:
 
 
 def _mode_instructions(mode: str) -> str:
+    if mode == "micro":
+        return (
+            "РЕЖИМ: ЧЕРНОВИК. simplified_text — ровно 1-2 предложения: только суть явления, "
+            "без истории, без вступлений. Остальные поля — минимальны."
+        )
     if mode == "simple":
         return (
-            "РЕЖИМ: ОЧЕНЬ ПРОСТО. Одна ключевая идея, максимум 6 предложений, одна аналогия. "
-            "Всё второстепенное убрать."
+            "РЕЖИМ: ПРОСТО. 6-9 предложений. Объясни главную идею + как это работает + одна аналогия. "
+            "Всё второстепенное убрать, но ответ должен ПОЛНОСТЬЮ отвечать на вопрос."
         )
     if mode == "detailed":
         return (
-            "РЕЖИМ: ПОДРОБНО. Включи все важные факты и причинно-следственные связи. "
-            "10-14 предложений, 2-3 аналогии под разными углами, полный глоссарий."
+            "РЕЖИМ: ПОДРОБНО. 15-20 предложений. Включи все важные факты, причинно-следственные связи, "
+            "исторический контекст (если нужен), примеры из жизни. 2-3 аналогии, полный глоссарий."
         )
     return (
-        "РЕЖИМ: СБАЛАНСИРОВАННО. 7-10 предложений. Главная идея + механизм + одна сильная аналогия. "
-        "Детали только если они помогают понять суть."
+        "РЕЖИМ: СБАЛАНСИРОВАННО. 12-16 предложений. "
+        "Структура: (1) что это такое, (2) как работает механизм пошагово, "
+        "(3) почему это важно / где встречается в жизни, (4) одна сильная аналогия, (5) интересный факт. "
+        "Ответ должен ПОЛНОСТЬЮ раскрывать вопрос — не обрывай на середине."
     )
 
 
@@ -172,7 +179,7 @@ def _output_schema_text() -> str:
         '"learning_steps":["..."],'
         '"glossary":[{"term":"...","definition":"..."}],'
         '"analogies":["..."],'
-        '"quiz":[{"question":"...","answer":"..."}],'
+        '"quiz":[{"question":"...","answer":"...","choices":["...","...","...","..."]}],'
         '"theories":[{"title":"...","text":"..."}]}'
     )
 
@@ -242,11 +249,15 @@ def _simplify_user_prompt(
     )
 
     quiz_guide = (
-        "quiz — РОВНО 3 вопроса, каждый проверяет ПОНИМАНИЕ, а не память:\n"
-        "  Q1: вопрос на механизм — «Почему...» или «Что происходит, когда...»\n"
-        "  Q2: вопрос на применение — «Где в жизни ты встречаешь...» или «Что изменится, если...»\n"
-        "  Q3: вопрос-объяснение — «Как бы ты объяснил другу, что такое...»\n"
-        "Ответы — короткие (1-2 предложения), но полные."
+        "quiz — РОВНО 3 вопроса-теста с вариантами ответов. Каждый вопрос:\n"
+        "  • question: конкретный вопрос на ПОНИМАНИЕ (не память)\n"
+        "    Q1: на механизм — «Почему...» или «Что происходит, когда...»\n"
+        "    Q2: на применение — «Где встречается...» или «Что изменится, если...»\n"
+        "    Q3: на объяснение — «Как бы ты объяснил...» или «Что значит...»\n"
+        "  • answer: ОДНА СТРОКА — правильный ответ (должен совпадать с одним из choices)\n"
+        "  • choices: РОВНО 4 варианта ответа — 1 правильный (answer) + 3 неправильных но похожих.\n"
+        "    Варианты короткие (до 8 слов). Перемешай правильный среди других случайно.\n"
+        "Формат каждого элемента: {\"question\":\"...\",\"answer\":\"...\",\"choices\":[\"...\",\"...\",\"...\",\"...\"]}"
     )
 
     glossary_guide = (
@@ -463,14 +474,24 @@ def _normalize_result(data: dict[str, Any], raw: dict[str, Any]) -> LLMResult:
     quiz = data.get("quiz") or data.get("questions") or []
     if not isinstance(quiz, list):
         quiz = []
-    quiz = [
-        {
+    parsed_quiz = []
+    for x in quiz:
+        if not isinstance(x, dict):
+            continue
+        if not (x.get("question") or x.get("answer")):
+            continue
+        raw_choices = x.get("choices") or []
+        choices = [_clean_text(c) for c in raw_choices if _clean_text(c)][:4] if isinstance(raw_choices, list) else []
+        item: dict = {
             "question": _clean_text(x.get("question", "")),
             "answer": _clean_text(x.get("answer", "")),
         }
-        for x in quiz
-        if isinstance(x, dict) and (x.get("question") or x.get("answer"))
-    ][:3]
+        if choices:
+            item["choices"] = choices
+        parsed_quiz.append(item)
+        if len(parsed_quiz) >= 3:
+            break
+    quiz = parsed_quiz
 
     reasoning_steps = _normalize_str_list(
         data.get("reasoning_steps") or data.get("reasoning") or data.get("thought_steps"),
@@ -600,8 +621,9 @@ def _gemini_schema() -> dict[str, Any]:
                     "properties": {
                         "question": {"type": "STRING"},
                         "answer": {"type": "STRING"},
+                        "choices": {"type": "ARRAY", "items": {"type": "STRING"}},
                     },
-                    "required": ["question", "answer"],
+                    "required": ["question", "answer", "choices"],
                 },
             },
             "theories": {
@@ -881,7 +903,8 @@ def _llm_only_user_prompt(query: str, age: int, mode: str) -> str:
         + context_note
         + "--- ТРЕБОВАНИЯ К ВЫХОДНЫМ ПОЛЯМ ---\n"
         "main_idea — одно предложение, суть темы.\n"
-        "simplified_text — объяснение для ребёнка (механизм, аналогия, вопрос). 2-3 эмодзи.\n"
+        "simplified_text — ПОЛНОЕ объяснение для ребёнка. Следуй режиму выше (число предложений). "
+        "Структура: что это → механизм → где встречается → аналогия → интересный факт. 2-3 эмодзи.\n"
         "glossary — 3-5 ключевых терминов с определениями для указанного возраста.\n"
         "analogies — 2-3 аналогии начинающихся с «Представь...» или «Это как...».\n"
         "quiz — 3 вопроса на понимание (не память).\n"
@@ -901,6 +924,131 @@ async def answer_without_article(query: str, age: int, mode: str = "balanced") -
             {"role": "user", "content": _llm_only_user_prompt(query, age, mode)},
         ]
     )
+
+
+async def draft_answer(query: str, age: int) -> str:
+    """Step 2 of the pipeline: generate a minimal 1-2 sentence direct answer."""
+    result = await answer_without_article(query, age=age, mode="micro")
+    return result.simplified_text
+
+
+def _synthesis_user_prompt(
+    query: str,
+    draft: str,
+    article_context: str,
+    age: int,
+    mode: str,
+) -> str:
+    age_instr = _age_instructions(age)
+    mode_instr = _mode_instructions(mode)
+
+    draft_block = (
+        f"ЧЕРНОВИК ОТВЕТА (прямая суть, 1–2 предложения):\n{draft}\n\n"
+        if draft else ""
+    )
+
+    if article_context:
+        ctx_block = (
+            f"КОНТЕКСТ ИЗ ЭНЦИКЛОПЕДИИ:\n{article_context}\n\n"
+            "Добавляй конкретные числа, даты, научные названия из контекста. "
+            "Если контекст противоречит черновику — доверяй контексту. "
+            "Не придумывай факты, которых нет ни в черновике, ни в контексте.\n\n"
+        )
+    else:
+        ctx_block = (
+            "КОНТЕКСТ ИЗ ЭНЦИКЛОПЕДИИ: пуст. "
+            "Опирайся только на черновик, объясняй максимально наглядно.\n\n"
+        )
+
+    analogies_guide = (
+        "analogies — выдели 1–3 ключевых понятия из объяснения. "
+        "Для каждого — одна короткая аналогия из быта, игр, еды, транспорта или природы. "
+        "Формат строки: «Термин: аналогия (одно предложение)». "
+        "Аналогия должна помогать предсказывать поведение явления, а не просто звучать похоже. "
+        "Не повторяй банальные сравнения. Если объяснение и так предельно ясное — верни []."
+    )
+
+    validation_block = (
+        "ПЕРЕД ФИНАЛИЗАЦИЕЙ ПРОВЕРЬ:\n"
+        "1. Правдоподобность: нет ли ложных фактов, вымысла, противоречий с наукой?\n"
+        "   Если да — удали или замени на информацию из черновика/контекста.\n"
+        "2. Доступность: каждое предложение понятно ребёнку указанного возраста?\n"
+        "   Если нет — перепиши короче, добавь бытовой пример.\n\n"
+    )
+
+    _theories_triggers = (
+        "куда", "почему", "зачем", "откуда", "вымер", "исчез", "погиб", "пропал",
+        "причин", "теори", "версий", "версия", "гипотез", "что случилось",
+    )
+    theories_required = any(t in query.lower() for t in _theories_triggers)
+    theories_guide = (
+        "theories — "
+        + (
+            "ОБЯЗАТЕЛЬНО 2-4 теории/версии (тема касается причин или исчезновения). "
+            if theories_required else
+            "если тема допускает конкурирующие объяснения — добавь теории. Иначе []."
+        )
+        + " Каждая: короткий заголовок + 1-3 предложения для ребёнка."
+    )
+
+    return (
+        f"{age_instr}\n\n"
+        f"{mode_instr}\n\n"
+        f"ВОПРОС ПОЛЬЗОВАТЕЛЯ: {query}\n\n"
+        + draft_block
+        + ctx_block
+        + validation_block
+        + "ПРАВИЛА ДЛЯ simplified_text:\n"
+        "• ОБЯЗАТЕЛЬНО полностью раскрой вопрос — не обрывай на середине, не давай слишком короткий ответ.\n"
+        "• Структура: что это → как работает (механизм) → где встречается/зачем нужно → интересный факт.\n"
+        "• Предложения до 12 слов. Если нужно сказать больше — используй несколько предложений.\n"
+        "• Сложные термины — сразу поясняй бытовым примером в том же предложении.\n"
+        "• Не используй «во-первых», «во-вторых», «как уже было сказано».\n"
+        "• Пиши живо, как будто объясняешь другу. Риторические вопросы приветствуются.\n"
+        "• 2-3 эмодзи для акцентов. Без Markdown.\n\n"
+        "--- ТРЕБОВАНИЯ К ВЫХОДНЫМ ПОЛЯМ ---\n"
+        "main_idea — одно предложение, суть темы (не более 20 слов).\n"
+        "simplified_text — ПОЛНОЕ объяснение для ребёнка. Следуй режиму (см. выше) — не менее указанного числа предложений.\n"
+        + analogies_guide + "\n"
+        "glossary — 3-5 терминов с определениями для указанного возраста.\n"
+        "quiz — 3 вопроса на понимание механизма (не на память).\n"
+        "reasoning_steps — ход рассуждений (как ты пришёл к этому объяснению).\n"
+        "learning_steps — 4-6 шагов «что узнаём».\n"
+        f"{theories_guide}\n\n"
+        f"Верни строго JSON: {_output_schema_text()}"
+    )
+
+
+async def synthesize_answer(
+    query: str,
+    draft: str,
+    article_excerpts: list[tuple[str, str]],
+    age: int,
+    mode: str = "balanced",
+) -> LLMResult:
+    """
+    Step 5-7 of the pipeline: synthesize a full structured answer for children
+    from a draft + article context. Includes analogy generation and self-validation
+    instructions in the prompt.
+    """
+    article_context = ""
+    for title, text in article_excerpts[:3]:
+        chunk = text[:1400].strip()
+        article_context += f"\n--- «{title}» ---\n{chunk}\n"
+
+    return await _chat([
+        {"role": "system", "content": _system_prompt()},
+        {
+            "role": "user",
+            "content": _synthesis_user_prompt(
+                query=query,
+                draft=draft,
+                article_context=article_context.strip(),
+                age=age,
+                mode=mode,
+            ),
+        },
+    ])
 
 
 async def enrich_answer_with_articles(

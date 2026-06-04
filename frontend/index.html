@@ -7,55 +7,45 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=5" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📚</text></svg>">
   </head>
   <body>
 
-    <!-- ─── Auth Modal ────────────────────────────────────────────────────── -->
-    <div id="authModal" class="modalOverlay hidden" role="dialog" aria-modal="true">
-      <div class="modalCard authCard">
-        <button class="modalClose" id="authModalClose" aria-label="Закрыть">✕</button>
-        <div class="authBrand">
-          <span class="brandMark">Р</span>
-          <span>Ruwiki Explain</span>
+    <!-- ─── Age Selection Modal ──────────────────────────────────────────── -->
+    <div id="ageModal" class="modalOverlay hidden" role="dialog" aria-modal="true">
+      <div class="modalCard ageCard">
+        <div class="ageCardHeader">
+          <div class="ageCardLogo">
+            <span class="brandMark">Р</span>
+          </div>
+          <h2 class="ageModalTitle">Сколько тебе лет?</h2>
+          <p class="ageModalSub">Подберу объяснения специально для тебя</p>
         </div>
-        <div class="authTabs">
-          <button class="authTab active" data-tab="login">Войти</button>
-          <button class="authTab" data-tab="register">Регистрация</button>
-        </div>
-
-        <!-- Login -->
-        <form id="loginForm" class="authForm">
-          <label>Email<input type="email" id="loginEmail" placeholder="you@mail.ru" required /></label>
-          <label>Пароль<input type="password" id="loginPassword" placeholder="••••••" required /></label>
-          <p id="loginError" class="authError hidden"></p>
-          <button type="submit" class="primaryBtn fullWidth">Войти</button>
-        </form>
-
-        <!-- Register -->
-        <form id="registerForm" class="authForm hidden">
-          <label>Email<input type="email" id="regEmail" placeholder="you@mail.ru" required /></label>
-          <label>Имя<input type="text" id="regName" placeholder="Как вас зовут?" /></label>
-          <label>
-            Дата рождения
-            <input type="date" id="regBirthDate" />
-            <span class="hint">Заполните, чтобы не вводить возраст каждый раз</span>
-          </label>
-          <label>Пароль<input type="password" id="regPassword" placeholder="минимум 6 символов" required /></label>
-          <p id="registerError" class="authError hidden"></p>
-          <button type="submit" class="primaryBtn fullWidth">Создать аккаунт</button>
-        </form>
-
-        <div id="oauthButtons" class="oauthButtons hidden">
-          <div class="oauthDivider"><span>или</span></div>
-          <button id="vkBtn" class="oauthBtn vkBtn" type="button">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M15.07 2H8.93C3.33 2 2 3.33 2 8.93v6.14C2 20.67 3.33 22 8.93 22h6.14C20.67 22 22 20.67 22 15.07V8.93C22 3.33 20.67 2 15.07 2zm2.26 13.68h-1.57c-.59 0-.77-.47-1.83-1.54-.92-.9-1.32-.99-1.55-.99-.32 0-.41.09-.41.52v1.41c0 .37-.12.59-1.1.59-1.62 0-3.41-.98-4.67-2.8C4.85 10.62 4.5 8.5 4.5 8.07c0-.23.09-.44.52-.44h1.57c.39 0 .54.18.69.61.76 2.19 2.03 4.11 2.55 4.11.2 0 .29-.09.29-.59V9.5c-.06-1.06-.62-1.15-.62-1.52 0-.18.15-.37.39-.37h2.47c.33 0 .44.18.44.55v2.95c0 .33.15.44.24.44.2 0 .37-.11.74-.48 1.14-1.27 1.95-3.24 1.95-3.24.11-.23.29-.44.68-.44h1.57c.47 0 .57.24.47.55-.2.9-2.09 3.58-2.09 3.58-.17.26-.23.38 0 .67.17.21.72.67 1.09 1.08.68.74 1.19 1.37 1.33 1.8.15.43-.08.65-.51.65z"/></svg>
-            Войти через ВКонтакте
+        <div class="ageOptions">
+          <button class="ageOptionBtn" data-age="7">
+            <span class="ageOptionEmoji">🌱</span>
+            <div class="ageOptionContent">
+              <span class="ageOptionLabel">6–8 лет</span>
+              <span class="ageOptionSub">Очень просто — как сказка</span>
+            </div>
+            <span class="ageOptionArrow">→</span>
           </button>
-          <button id="yandexBtn" class="oauthBtn yandexBtn" type="button">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M2 12C2 6.477 6.477 2 12 2s10 4.477 10 10-4.477 10-10 10S2 17.523 2 12zm11.424-5.6h-1.2c-1.648 0-2.52.88-2.52 2.2 0 1.112.48 1.776 1.504 2.432l.832.56-2.4 3.608H7.784l2.16-3.232c-1.304-.96-2.04-1.92-2.04-3.44 0-1.984 1.368-3.328 3.848-3.328h2.568V17.6h-1.696V6.4h.8z"/></svg>
-            Войти через Яндекс
+          <button class="ageOptionBtn" data-age="10">
+            <span class="ageOptionEmoji">📚</span>
+            <div class="ageOptionContent">
+              <span class="ageOptionLabel">9–11 лет</span>
+              <span class="ageOptionSub">Школьная программа</span>
+            </div>
+            <span class="ageOptionArrow">→</span>
+          </button>
+          <button class="ageOptionBtn" data-age="13">
+            <span class="ageOptionEmoji">🔬</span>
+            <div class="ageOptionContent">
+              <span class="ageOptionLabel">12–14 лет</span>
+              <span class="ageOptionSub">Подробно и по-взрослому</span>
+            </div>
+            <span class="ageOptionArrow">→</span>
           </button>
         </div>
       </div>
@@ -79,17 +69,17 @@
       <!-- Sidebar -->
       <aside class="sidebar" id="sidebar">
 
-        <!-- User area (profile / login) -->
+        <!-- Age widget -->
         <div class="sidebarUserArea">
-          <div id="userWidget" class="userWidget">
-            <button class="loginBtn" id="loginBtn" type="button">Войти</button>
+          <div id="ageWidget" class="ageWidget">
+            <span class="ageWidgetIcon">🎓</span>
+            <span class="ageWidgetText">Возраст: <span id="ageDisplay">—</span></span>
+            <button id="changeAgeBtn" class="changeAgeBtn" title="Изменить возраст">✏</button>
           </div>
         </div>
 
-        <!-- Chat history -->
-        <div class="sidebarChatsList" id="sidebarChatsList">
-          <p class="sidebarChatsEmpty">Войдите, чтобы сохранять историю</p>
-        </div>
+        <!-- Session history -->
+        <div class="sidebarChatsList" id="sidebarChatsList"></div>
 
         <!-- New chat -->
         <div class="sidebarNewChatSection">
@@ -108,17 +98,13 @@
 
         <!-- Footer links -->
         <div class="sidebarFooter">
-          <button class="sidebarFooterItem" id="deleteAllChatsBtn">
+          <button class="sidebarFooterItem" id="clearHistoryBtn">
             <span class="footerItemIcon">🗑</span>
-            <span class="navLabel">Удалить всю историю</span>
+            <span class="navLabel">Очистить историю</span>
           </button>
-<button class="sidebarFooterItem" id="openAboutBtn">
+          <button class="sidebarFooterItem" id="openAboutBtn">
             <span class="footerItemIcon">↗</span>
             <span class="navLabel">О сервисе</span>
-          </button>
-          <button class="sidebarFooterItem danger" id="sidebarLogoutBtn">
-            <span class="footerItemIcon">⏻</span>
-            <span class="navLabel">Выйти</span>
           </button>
         </div>
       </aside>
@@ -256,6 +242,6 @@
     </div>
 
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-    <script src="./app.js"></script>
+    <script src="./app.js?v=5"></script>
   </body>
 </html>
