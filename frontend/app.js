@@ -378,7 +378,7 @@ function addAssistantMessage(data) {
   // "Кратко" header (was "Главная мысль")
   const $idea = $("<div>").addClass("msgMainIdea");
   $("<div>").addClass("msgMainIdeaLabel").text("Кратко").appendTo($idea);
-  $("<div>").addClass("msgMainIdeaText").text(data.main_idea || "").appendTo($idea);
+  $("<div>").addClass("msgMainIdeaText").text(_stripEmoji(data.main_idea || "")).appendTo($idea);
   $el.append($idea);
 
   // Build full TTS text (all visible content combined)
@@ -395,13 +395,13 @@ function addAssistantMessage(data) {
   const $actions = $("<div>").addClass("msgActions");
 
   if (data.quiz?.length) {
-    $("<button>").addClass("msgActionBtn quizBtn").text("Викторина")
+    $("<button>").addClass("msgActionBtn quizBtn").text("🎮 Викторина")
       .on("click", () => openQuiz(data.quiz)).appendTo($actions);
   }
 
   // TTS button + timeline container
   const $ttsWrap = $("<div>").addClass("ttsWrap").appendTo($actions);
-  const $ttsBtn = $("<button>").addClass("msgActionBtn ttsBtn").text("Озвучить").appendTo($ttsWrap);
+  const $ttsBtn = $("<button>").addClass("msgActionBtn ttsBtn").text("🔊 Озвучить").appendTo($ttsWrap);
   const $timeline = $("<div>").addClass("ttsTimeline hidden").appendTo($ttsWrap);
   const $pauseBtn = $("<button>").addClass("ttsPauseBtn").text("⏸").appendTo($timeline);
   const $track = $("<div>").addClass("ttsTrack").appendTo($timeline);
@@ -412,10 +412,10 @@ function addAssistantMessage(data) {
     speakWithTimeline(fullTtsText, $ttsBtn, $timeline, $fill, $pauseBtn, $timeLabel);
   });
 
-  $("<button>").addClass("msgActionBtn").text("Копировать")
+  $("<button>").addClass("msgActionBtn").text("📋 Копировать")
     .on("click", () => copyFullMessage(data)).appendTo($actions);
 
-  $("<button>").addClass("msgActionBtn").text("Скачать PDF")
+  $("<button>").addClass("msgActionBtn").text("📄 Скачать PDF")
     .on("click", () => downloadPdf(data)).appendTo($actions);
 
   // Favorite toggle
@@ -457,7 +457,7 @@ function addAssistantMessage(data) {
   $("<div>").addClass("msgSectionTitle").text("Объяснение").appendTo($expSec);
   const $text = $("<div>").addClass("msgText").appendTo($expSec);
   $body.append($expSec);
-  typeText($text, data.simplified_text || "", data.cached ? 4 : 14);
+  typeText($text, _stripEmoji(data.simplified_text || ""), data.cached ? 4 : 14);
 
   // Analogies (was "Аналогии" → "Примеры")
   if (data.analogies?.length) {
@@ -465,7 +465,7 @@ function addAssistantMessage(data) {
     $("<div>").addClass("msgSectionTitle").text("Примеры").appendTo($aSec);
     const $aBox = $("<div>").addClass("msgAnalogies").appendTo($aSec);
     const $ul = $("<ul>").appendTo($aBox);
-    data.analogies.forEach(a => $("<li>").text(a).appendTo($ul));
+    data.analogies.forEach(a => $("<li>").text(_stripEmoji(a)).appendTo($ul));
     $body.append($aSec);
   }
 
@@ -475,11 +475,12 @@ function addAssistantMessage(data) {
     $("<div>").addClass("msgSectionTitle").text("Ключевые слова").appendTo($gSec);
     const $gBox = $("<div>").addClass("msgGlossary").appendTo($gSec);
     data.glossary.forEach(item => {
-      let def = item.definition || "";
-      const termPrefix = new RegExp("^" + item.term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*[-—–:]\\s*", "i");
+      let def = _stripEmoji(item.definition || "");
+      const rawTerm = _stripEmoji(item.term);
+      const termPrefix = new RegExp("^" + rawTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*[-—–:]\\s*", "i");
       def = def.replace(termPrefix, "");
       def = def.charAt(0).toLowerCase() + def.slice(1);
-      const term = item.term.charAt(0).toUpperCase() + item.term.slice(1);
+      const term = rawTerm.charAt(0).toUpperCase() + rawTerm.slice(1);
       const $gItem = $("<div>").addClass("msgGlossaryItem")
         .append($("<span>").addClass("msgGlossaryTerm").text(term + " "))
         .append(document.createTextNode("— " + def));
@@ -754,7 +755,7 @@ function _stopTts() {
   if (_ttsController) { _ttsController.abort(); _ttsController = null; }
   if (_ttsAudio) { _ttsAudio.pause(); _ttsAudio.src = ""; _ttsAudio = null; }
   if (_ttsTimerRAF) { cancelAnimationFrame(_ttsTimerRAF); _ttsTimerRAF = null; }
-  if (_activeTtsBtn) { _activeTtsBtn.removeClass("speaking").text("Озвучить"); _activeTtsBtn = null; }
+  if (_activeTtsBtn) { _activeTtsBtn.removeClass("speaking").text("🔊 Озвучить"); _activeTtsBtn = null; }
   if (_activeTtsFill) { _activeTtsFill.removeClass("ttsLoadingAnim").css("width", "0%"); }
   if (_activeTtsPauseBtn) { _activeTtsPauseBtn.prop("disabled", false).text("⏸"); }
   if (_activeTtsTimeline) { _activeTtsTimeline.addClass("hidden"); _activeTtsTimeline = null; }
@@ -847,7 +848,7 @@ async function speakWithTimeline(text, $btn, $timeline, $fill, $pauseBtn, $timeL
     console.warn("TTS failed, falling back to browser voice:", e);
     $timeline.addClass("hidden");
     $fill.removeClass("ttsLoadingAnim").css("width", "0%");
-    $btn.removeClass("speaking").text("Озвучить");
+    $btn.removeClass("speaking").text("🔊 Озвучить");
     _activeTtsBtn = null;
     const u = new SpeechSynthesisUtterance(cleanText);
     u.lang = "ru-RU"; u.rate = 0.87;
@@ -855,7 +856,7 @@ async function speakWithTimeline(text, $btn, $timeline, $fill, $pauseBtn, $timeL
     if (ruVoice) u.voice = ruVoice;
     $btn.addClass("speaking").text("⏹ Стоп");
     _activeTtsBtn = $btn;
-    u.onend = u.onerror = () => { $btn.removeClass("speaking").text("Озвучить"); _activeTtsBtn = null; };
+    u.onend = u.onerror = () => { $btn.removeClass("speaking").text("🔊 Озвучить"); _activeTtsBtn = null; };
     window.speechSynthesis.speak(u);
   }
 }
