@@ -46,6 +46,7 @@ const state = {
   age: null,           // int: 7, 10 or 13 — loaded from localStorage
   sessions: [],        // [{id, title, $nodes, msgCount}]
   currentIdx: -1,      // index into sessions; -1 = no session yet
+  favorites: [],       // [{id, query, savedAt, data}] — persisted in localStorage
   currentPanel: "chat",
   enableMetrics: false,
   selectedModelId: "",
@@ -73,6 +74,117 @@ function setStoredAge(age) {
 }
 
 function authHeaders() { return {}; }
+
+// ---------------------------------------------------------------------------
+// Favorites + PDF
+// ---------------------------------------------------------------------------
+function _escapeHtml(s) {
+  return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+function loadFavoritesFromStorage() {
+  try { return JSON.parse(localStorage.getItem("rw_favorites") || "[]"); } catch { return []; }
+}
+
+function saveFavoritesToStorage() {
+  try { localStorage.setItem("rw_favorites", JSON.stringify(state.favorites)); } catch {}
+}
+
+function toggleFavorite(data, $btn) {
+  const favId = data.history_key || ((data.query || "").slice(0, 40) + "|" + (data.main_idea || "").slice(0, 20));
+  const idx = state.favorites.findIndex(f => f.id === favId);
+  if (idx >= 0) {
+    state.favorites.splice(idx, 1);
+    $btn.removeClass("active").text("☆ Сохранить");
+    setStatus("Удалено из избранного.");
+  } else {
+    state.favorites.unshift({ id: favId, query: data.query || "", savedAt: new Date().toISOString(), data });
+    $btn.addClass("active").text("★ В избранном");
+    setStatus("Добавлено в избранное.");
+  }
+  saveFavoritesToStorage();
+  setTimeout(() => setStatus(""), 2000);
+}
+
+function loadFavoritesPanel() {
+  const $c = $("#favoritesListContainer").empty();
+  if (!state.favorites.length) {
+    $("<p>").css({ color: "var(--text3)", padding: "24px 0", textAlign: "center" })
+      .text("Нет сохранённых ответов. Нажми ☆ под любым ответом.").appendTo($c);
+    return;
+  }
+  state.favorites.forEach((fav, i) => {
+    const $card = $("<div>").addClass("favCard");
+    $("<div>").addClass("favCardQuery").text(fav.query || "Без названия").appendTo($card);
+    if (fav.data.main_idea) {
+      $("<div>").addClass("favCardIdea").text(fav.data.main_idea).appendTo($card);
+    }
+    $("<div>").addClass("favCardDate")
+      .text(new Date(fav.savedAt).toLocaleDateString("ru-RU")).appendTo($card);
+    const $row = $("<div>").addClass("favCardActions").appendTo($card);
+    $("<button>").addClass("favCardBtn").text("Скачать PDF")
+      .on("click", () => downloadPdf(fav.data)).appendTo($row);
+    $("<button>").addClass("favCardBtn favCardDel").text("Удалить")
+      .on("click", () => {
+        state.favorites.splice(i, 1);
+        saveFavoritesToStorage();
+        loadFavoritesPanel();
+      }).appendTo($row);
+    $c.append($card);
+  });
+}
+
+function downloadPdf(data) {
+  const title = data.query || data.main_idea || "Ruwiki Explain";
+  let body = "";
+  if (data.main_idea) {
+    body += `<div class="section"><div class="label">Кратко</div><div class="main-idea">${_escapeHtml(data.main_idea)}</div></div>`;
+  }
+  if (data.simplified_text) {
+    body += `<div class="section"><div class="label">Объяснение</div><p>${_escapeHtml(data.simplified_text).replace(/\n/g, "<br>")}</p></div>`;
+  }
+  if (data.analogies?.length) {
+    body += `<div class="section"><div class="label">Примеры</div><ul>${data.analogies.map(a => `<li>${_escapeHtml(a)}</li>`).join("")}</ul></div>`;
+  }
+  if (data.glossary?.length) {
+    body += `<div class="section"><div class="label">Ключевые слова</div><ul>${data.glossary.map(g => `<li><strong>${_escapeHtml(g.term)}</strong> — ${_escapeHtml(g.definition)}</li>`).join("")}</ul></div>`;
+  }
+  if (data.source_title && data.source_url) {
+    body += `<div class="section"><div class="label">Источник</div><p><a href="${_escapeHtml(data.source_url)}">${_escapeHtml(data.source_title)}</a></p></div>`;
+  }
+
+  const html = `<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8">
+<title>${_escapeHtml(title)} — Ruwiki Explain</title>
+<style>
+  body{font-family:Arial,sans-serif;max-width:700px;margin:40px auto;color:#111;line-height:1.75;font-size:15px;padding:0 20px}
+  h1{font-size:1.45rem;color:#5b21b6;margin-bottom:4px}
+  .subtitle{font-size:.82rem;color:#999;margin-bottom:28px}
+  .section{margin-bottom:22px}
+  .label{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#888;margin-bottom:6px}
+  .main-idea{font-size:1.08rem;font-weight:700;line-height:1.45}
+  p{margin:0}ul{padding-left:20px}li{margin-bottom:5px}
+  strong{color:#5b21b6}a{color:#5b21b6}
+  .footer{margin-top:44px;padding-top:10px;border-top:1px solid #e5e7eb;font-size:.75rem;color:#aaa}
+  @media print{body{margin:20px}}
+</style>
+</head><body>
+<h1>${_escapeHtml(title)}</h1>
+<div class="subtitle">Ruwiki Explain — объяснение для детей &bull; ruwiki.ru</div>
+${body}
+<div class="footer">Ruwiki Explain &mdash; ${new Date().toLocaleDateString("ru-RU")}</div>
+<script>window.addEventListener("load",function(){setTimeout(function(){window.print()},350)});<\/script>
+</body></html>`;
+
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, "_blank");
+  if (!win) {
+    setStatus("Браузер заблокировал всплывающее окно — разреши его для этого сайта.");
+    setTimeout(() => setStatus(""), 5000);
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
 
 // ---------------------------------------------------------------------------
 // Network
@@ -283,13 +395,13 @@ function addAssistantMessage(data) {
   const $actions = $("<div>").addClass("msgActions");
 
   if (data.quiz?.length) {
-    $("<button>").addClass("msgActionBtn quizBtn").text("🎮 Викторина")
+    $("<button>").addClass("msgActionBtn quizBtn").text("Викторина")
       .on("click", () => openQuiz(data.quiz)).appendTo($actions);
   }
 
   // TTS button + timeline container
   const $ttsWrap = $("<div>").addClass("ttsWrap").appendTo($actions);
-  const $ttsBtn = $("<button>").addClass("msgActionBtn ttsBtn").text("🔊 Озвучить").appendTo($ttsWrap);
+  const $ttsBtn = $("<button>").addClass("msgActionBtn ttsBtn").text("Озвучить").appendTo($ttsWrap);
   const $timeline = $("<div>").addClass("ttsTimeline hidden").appendTo($ttsWrap);
   const $pauseBtn = $("<button>").addClass("ttsPauseBtn").text("⏸").appendTo($timeline);
   const $track = $("<div>").addClass("ttsTrack").appendTo($timeline);
@@ -300,8 +412,20 @@ function addAssistantMessage(data) {
     speakWithTimeline(fullTtsText, $ttsBtn, $timeline, $fill, $pauseBtn, $timeLabel);
   });
 
-  $("<button>").addClass("msgActionBtn").text("📋 Копировать")
+  $("<button>").addClass("msgActionBtn").text("Копировать")
     .on("click", () => copyFullMessage(data)).appendTo($actions);
+
+  $("<button>").addClass("msgActionBtn").text("Скачать PDF")
+    .on("click", () => downloadPdf(data)).appendTo($actions);
+
+  // Favorite toggle
+  const _favId = data.history_key || ((data.query || "").slice(0, 40) + "|" + (data.main_idea || "").slice(0, 20));
+  const _isFav = state.favorites.some(f => f.id === _favId);
+  $("<button>").addClass("msgActionBtn favoriteBtn")
+    .toggleClass("active", _isFav)
+    .text(_isFav ? "★ В избранном" : "☆ Сохранить")
+    .on("click", function() { toggleFavorite(data, $(this)); })
+    .appendTo($actions);
 
   // Rating stars
   const $rating = $("<div>").addClass("msgRating");
@@ -330,7 +454,7 @@ function addAssistantMessage(data) {
 
   // Explanation
   const $expSec = $("<div>").addClass("msgSection");
-  $("<div>").addClass("msgSectionTitle").text("💡 Объяснение").appendTo($expSec);
+  $("<div>").addClass("msgSectionTitle").text("Объяснение").appendTo($expSec);
   const $text = $("<div>").addClass("msgText").appendTo($expSec);
   $body.append($expSec);
   typeText($text, data.simplified_text || "", data.cached ? 4 : 14);
@@ -338,7 +462,7 @@ function addAssistantMessage(data) {
   // Analogies (was "Аналогии" → "Примеры")
   if (data.analogies?.length) {
     const $aSec = $("<div>").addClass("msgSection");
-    $("<div>").addClass("msgSectionTitle").text("🎯 Примеры").appendTo($aSec);
+    $("<div>").addClass("msgSectionTitle").text("Примеры").appendTo($aSec);
     const $aBox = $("<div>").addClass("msgAnalogies").appendTo($aSec);
     const $ul = $("<ul>").appendTo($aBox);
     data.analogies.forEach(a => $("<li>").text(a).appendTo($ul));
@@ -348,7 +472,7 @@ function addAssistantMessage(data) {
   // Glossary (was "Ключевые термины" → "Ключевые слова")
   if (data.glossary?.length) {
     const $gSec = $("<div>").addClass("msgSection");
-    $("<div>").addClass("msgSectionTitle").text("📖 Ключевые слова").appendTo($gSec);
+    $("<div>").addClass("msgSectionTitle").text("Ключевые слова").appendTo($gSec);
     const $gBox = $("<div>").addClass("msgGlossary").appendTo($gSec);
     data.glossary.forEach(item => {
       let def = item.definition || "";
@@ -371,7 +495,7 @@ function addAssistantMessage(data) {
   // Theories
   if (data.theories?.length) {
     const $tSec = $("<div>").addClass("msgSection");
-    $("<div>").addClass("msgSectionTitle").text("🔭 Версии и теории").appendTo($tSec);
+    $("<div>").addClass("msgSectionTitle").text("Версии и теории").appendTo($tSec);
     data.theories.forEach(t => {
       const $card = $("<div>").addClass("msgTheoryCard");
       $("<div>").addClass("msgTheoryTitle").text(t.title).appendTo($card);
@@ -384,11 +508,11 @@ function addAssistantMessage(data) {
   // Sources — only the main article source (not per-term, those are inline above)
   if (data.source_url) {
     const $sSec = $("<div>").addClass("msgSection");
-    $("<div>").addClass("msgSectionTitle").text("🔗 Источник").appendTo($sSec);
+    $("<div>").addClass("msgSectionTitle").text("Источник").appendTo($sSec);
     const $sRow = $("<div>").addClass("msgSources").appendTo($sSec);
     $("<a>").addClass("msgSourceLink")
       .attr({ href: data.source_url, target: "_blank", rel: "noreferrer" })
-      .text("📰 " + (data.source_title || "Статья в Рувики")).appendTo($sRow);
+      .text(data.source_title || "Статья в Рувики").appendTo($sRow);
     $body.append($sSec);
   }
 
@@ -444,7 +568,7 @@ function addGibberishMessage() {
 
   const $body = $("<div>").addClass("msgBody");
   const $sec = $("<div>").addClass("msgSection");
-  $("<div>").addClass("msgSectionTitle").text("💡 Например, можно спросить").appendTo($sec);
+  $("<div>").addClass("msgSectionTitle").text("Например, можно спросить").appendTo($sec);
   const $ul = $("<ul>").css({ paddingLeft: "18px", color: "var(--text2)", lineHeight: "1.8" });
   ["Что такое чёрная дыра?", "Как работает двигатель?", "Древний Египет"].forEach(l =>
     $("<li>").text(l).appendTo($ul));
@@ -475,7 +599,7 @@ function addNotFoundMessage(query) {
 
   const $body = $("<div>").addClass("msgBody");
   const $sec = $("<div>").addClass("msgSection");
-  $("<div>").addClass("msgSectionTitle").text("💡 Попробуй переформулировать").appendTo($sec);
+  $("<div>").addClass("msgSectionTitle").text("Попробуй переформулировать").appendTo($sec);
   const lines = [
     `Используй ключевое слово: «${suggestion}»`,
     "Напиши тему как в учебнике, без вопросов",
@@ -630,7 +754,9 @@ function _stopTts() {
   if (_ttsController) { _ttsController.abort(); _ttsController = null; }
   if (_ttsAudio) { _ttsAudio.pause(); _ttsAudio.src = ""; _ttsAudio = null; }
   if (_ttsTimerRAF) { cancelAnimationFrame(_ttsTimerRAF); _ttsTimerRAF = null; }
-  if (_activeTtsBtn) { _activeTtsBtn.removeClass("speaking").text("🔊 Озвучить"); _activeTtsBtn = null; }
+  if (_activeTtsBtn) { _activeTtsBtn.removeClass("speaking").text("Озвучить"); _activeTtsBtn = null; }
+  if (_activeTtsFill) { _activeTtsFill.removeClass("ttsLoadingAnim").css("width", "0%"); }
+  if (_activeTtsPauseBtn) { _activeTtsPauseBtn.prop("disabled", false).text("⏸"); }
   if (_activeTtsTimeline) { _activeTtsTimeline.addClass("hidden"); _activeTtsTimeline = null; }
   _activeTtsFill = null; _activeTtsLabel = null; _activeTtsPauseBtn = null;
 }
@@ -663,6 +789,12 @@ async function speakWithTimeline(text, $btn, $timeline, $fill, $pauseBtn, $timeL
   _activeTtsFill = $fill;
   _activeTtsLabel = $timeLabel;
   _activeTtsPauseBtn = $pauseBtn;
+
+  // Show loading state immediately — shimmer bar while audio fetches
+  $timeline.removeClass("hidden");
+  $fill.addClass("ttsLoadingAnim");
+  $timeLabel.text("...");
+  $pauseBtn.prop("disabled", true).text("...");
 
   const controller = new AbortController();
   _ttsController = controller;
@@ -700,7 +832,8 @@ async function speakWithTimeline(text, $btn, $timeline, $fill, $pauseBtn, $timeL
     _ttsAudio = new Audio(url);
 
     _ttsAudio.oncanplay = () => {
-      $timeline.removeClass("hidden");
+      $fill.removeClass("ttsLoadingAnim");
+      $pauseBtn.prop("disabled", false).text("⏸");
       _updateTtsTimeline();
     };
     _ttsAudio.onended = _ttsAudio.onerror = () => {
@@ -712,7 +845,9 @@ async function speakWithTimeline(text, $btn, $timeline, $fill, $pauseBtn, $timeL
   } catch (e) {
     if (e.name === "AbortError") return;
     console.warn("TTS failed, falling back to browser voice:", e);
-    $btn.removeClass("speaking").text("🔊 Озвучить");
+    $timeline.addClass("hidden");
+    $fill.removeClass("ttsLoadingAnim").css("width", "0%");
+    $btn.removeClass("speaking").text("Озвучить");
     _activeTtsBtn = null;
     const u = new SpeechSynthesisUtterance(cleanText);
     u.lang = "ru-RU"; u.rate = 0.87;
@@ -720,7 +855,7 @@ async function speakWithTimeline(text, $btn, $timeline, $fill, $pauseBtn, $timeL
     if (ruVoice) u.voice = ruVoice;
     $btn.addClass("speaking").text("⏹ Стоп");
     _activeTtsBtn = $btn;
-    u.onend = u.onerror = () => { $btn.removeClass("speaking").text("🔊 Озвучить"); _activeTtsBtn = null; };
+    u.onend = u.onerror = () => { $btn.removeClass("speaking").text("Озвучить"); _activeTtsBtn = null; };
     window.speechSynthesis.speak(u);
   }
 }
@@ -1068,6 +1203,7 @@ function switchPanel(name) {
   $(".navItem").removeClass("active");
   $(`.navItem[data-panel="${name}"]`).addClass("active");
   if (name === "chats") loadSidebarChats();
+  if (name === "favorites") loadFavoritesPanel();
 }
 
 // ---------------------------------------------------------------------------
@@ -1182,6 +1318,9 @@ $(async function () {
   });
   $("#ageModal").on("click", e => { if (e.target === e.currentTarget) closeAgeModal(); });
   $("#changeAgeBtn").on("click", openAgeModal);
+
+  // Load favorites from localStorage
+  state.favorites = loadFavoritesFromStorage();
 
   // Restore age and show modal if not set
   state.age = getStoredAge();
@@ -1302,6 +1441,11 @@ $(async function () {
 
   $("#openAboutBtn").on("click", ()=>{
     switchPanel("info");
+    if (window.innerWidth<=640) closeMobileSidebar();
+  });
+
+  $("#favoritesNavBtn").on("click", ()=>{
+    switchPanel("favorites");
     if (window.innerWidth<=640) closeMobileSidebar();
   });
 

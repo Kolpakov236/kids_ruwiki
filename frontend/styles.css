@@ -1298,3 +1298,83 @@ body { background: var(--bg); color: var(--text); }
 
 /* msgActions now sits above msgBody — change border */
 .msgActions { border-top: none; border-bottom: 1px solid var(--border); }
+
+/* ============================================================
+   TTS loading shimmer
+   ============================================================ */
+.ttsFill.ttsLoadingAnim {
+  width: 100% !important;
+  background: linear-gradient(90deg,
+    var(--purple) 0%,
+    rgba(167,139,250,0.35) 45%,
+    var(--purple) 60%,
+    rgba(167,139,250,0.2) 100%);
+  background-size: 200% 100%;
+  animation: ttsShimmer 1.3s ease-in-out infinite;
+  transition: none;
+}
+@keyframes ttsShimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* ============================================================
+   Favorite action button
+   ============================================================ */
+.msgActionBtn.favoriteBtn.active {
+  color: #fbbf24;
+  border-color: rgba(251,191,36,0.4);
+  background: rgba(251,191,36,0.08);
+}
+.msgActionBtn.favoriteBtn.active:hover { background: rgba(251,191,36,0.14); }
+
+/* ============================================================
+   Favorites panel cards
+   ============================================================ */
+.favCard {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg3);
+  margin-bottom: 10px;
+  transition: border-color 0.15s;
+}
+.favCard:hover { border-color: var(--border2); }
+.favCardQuery {
+  font-weight: 800;
+  font-size: 0.98rem;
+  color: var(--text);
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+.favCardIdea {
+  font-size: 0.87rem;
+  color: var(--text2);
+  line-height: 1.5;
+  margin-bottom: 8px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.favCardDate {
+  font-size: 0.74rem;
+  color: var(--text3);
+  margin-bottom: 12px;
+}
+.favCardActions { display: flex; gap: 8px; flex-wrap: wrap; }
+.favCardBtn {
+  padding: 5px 13px;
+  border: 1px solid var(--border2);
+  border-radius: 9px;
+  background: var(--bg2);
+  color: var(--text2);
+  font: inherit;
+  font-size: 0.81rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.favCardBtn:hover { background: rgba(255,255,255,0.08); color: var(--text); }
+.favCardDel { color: #f87171; border-color: rgba(239,68,68,0.25); }
+.favCardDel:hover { background: rgba(239,68,68,0.1); border-color: var(--red); color: var(--red); }
