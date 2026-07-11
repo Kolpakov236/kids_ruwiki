@@ -65,6 +65,7 @@ workflows:
                   --environment ENABLE_VECTOR_CACHE=false \
                   --environment "YANDEX_FOLDER_ID=$YC_FOLDER_ID" \
                   --environment "LLM_API_KEY=$YC_LLM_API_KEY" \
+                  --environment LLM_FAST_MODEL=deepseek-v4-flash \
                   --environment "SECRET_KEY=$YC_SECRET_KEY"
               - |
                 if [ "$PUBLIC" = "true" ]; then
