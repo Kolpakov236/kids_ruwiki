@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     llm_api_key: str | None = None
     gemini_api_key: str | None = None
     google_api_key: str | None = None
+    llm_fast_model: str | None = None  # moderation + draft; falls back to llm_model
     llm_timeout_seconds: float = 120.0
     llm_max_input_chars: int = 5000
     llm_temperature: float = 0.35

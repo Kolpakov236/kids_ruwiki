@@ -237,18 +237,41 @@ def _build_cached_response(
 
 
 
+_CHARACTER_QUERY_RE = re.compile(
+    r"^(?:кто такой|кто такая|кто такие|кто это|что это за персонаж|расскажи про|кто)\s+",
+    re.IGNORECASE,
+)
+_CHARACTER_DRAFT_RE = re.compile(
+    r"персонаж|литературный герой|из книги|из мультфильма|из сказки|герой сказки|герой книги",
+    re.IGNORECASE,
+)
+
+
 def _build_search_hints(query: str, llm_result=None) -> list[str]:
     """
     Build an ordered list of search queries.
     Starts with the standard query variants, then appends proper nouns extracted
     from the draft text (or full LLMResult) to point at the most relevant articles.
+    For character/person queries, also tries disambiguation suffixes.
     """
     from app.services.ruwiki import _extract_search_queries
 
     hints: list[str] = list(_extract_search_queries(query))
 
+    # For character/person queries, add disambiguation variants early
+    is_character_query = bool(_CHARACTER_QUERY_RE.match(query.strip()))
+    seen_lower = {h.lower() for h in hints}
+
+    if is_character_query and hints:
+        concept = hints[0]
+        for suffix in [" (персонаж)", " (литературный персонаж)"]:
+            variant = concept + suffix
+            if variant.lower() not in seen_lower:
+                hints.insert(1, variant)
+                seen_lower.add(variant.lower())
+
     if llm_result is None:
-        return hints
+        return hints[:8]
 
     # Accept either a plain draft string or a full LLMResult
     if isinstance(llm_result, str):
@@ -258,9 +281,16 @@ def _build_search_hints(query: str, llm_result=None) -> list[str]:
         text = llm_result.simplified_text or ""
         glossary_items = (llm_result.glossary or [])[:3]
 
+    # If draft identifies topic as a character/fictional hero, add disambiguation hint
+    if text and _CHARACTER_DRAFT_RE.search(text) and hints:
+        concept = hints[0]
+        variant = concept + " (персонаж)"
+        if variant.lower() not in seen_lower:
+            hints.insert(1, variant)
+            seen_lower.add(variant.lower())
+
     # Proper nouns from the draft/answer text (e.g. "Криштиану Роналду")
     proper_nouns = re.findall(r"\b[А-ЯЁ][а-яё]{3,}(?:\s+[А-ЯЁ][а-яё]{3,})*\b", text)
-    seen_lower = {h.lower() for h in hints}
     for pn in proper_nouns[:4]:
         if pn.lower() not in seen_lower:
             hints.append(pn)
@@ -306,7 +336,9 @@ async def simplify_pipeline(
     model_id: str | None = None,
 ) -> SimplifyResponse:
     from app.services.llm import _model_override
-    tok = _model_override.set(model_id) if model_id else None
+    _fast_model = settings.llm_fast_model or model_id or settings.llm_model
+    _main_model = model_id or settings.llm_model
+    tok = _model_override.set(_fast_model)
 
     t0 = time.perf_counter()
     timings: dict[str, int] = {}
@@ -410,6 +442,10 @@ async def simplify_pipeline(
     # Single LLM call: uses draft as seed, articles as factual context,
     # applies age-appropriate language, generates analogies, self-validates.
     _article_excerpts = [(a.title, a.text) for _, a in _scored[:3]]
+
+    # Switch to main (high-quality) model for synthesis
+    _model_override.reset(tok)
+    tok = _model_override.set(_main_model)
 
     _e0 = time.perf_counter()
     try:

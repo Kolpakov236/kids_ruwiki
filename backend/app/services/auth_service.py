@@ -103,3 +103,4 @@ def get_or_create_oauth_user(
         )
         row = conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone()
         return dict(row)
+    

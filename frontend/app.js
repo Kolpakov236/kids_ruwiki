@@ -675,10 +675,13 @@ function renderQuizStep() {
             $opts.find(".quizChoiceBtn").filter(function() {
               return $(this).text().trim() === correctAnswer;
             }).addClass("correct");
+            $("<div>").addClass("quizCorrectHint pop-in")
+              .html(`<span class="quizCorrectHintIcon">✓</span> Правильный ответ: <strong>${$("<span>").text(correctAnswer).html()}</strong>`)
+              .appendTo($card);
           }
           $opts.find(".quizChoiceBtn").prop("disabled", true);
           if (isCorrect) quiz.score++;
-          setTimeout(() => { quiz.current++; renderQuizStep(); }, 1000);
+          setTimeout(() => { quiz.current++; renderQuizStep(); }, isCorrect ? 900 : 2400);
         }).appendTo($opts);
     });
   } else {

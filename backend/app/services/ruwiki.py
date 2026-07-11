@@ -466,8 +466,8 @@ async def fetch_article(
 
             return best_article
 
-        # Try each API endpoint until we get a good result
-        for api_url in _mw_api_candidates() + _wikipedia_api_candidates():
+        # Try each API endpoint until we get a good result (Ruwiki only, no Wikipedia)
+        for api_url in _mw_api_candidates():
             try:
                 article = await find_best_article(api_url)
                 if article:
