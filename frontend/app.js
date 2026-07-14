@@ -48,7 +48,7 @@ const state = {
   currentIdx: -1,      // index into sessions; -1 = no session yet
   favorites: [],       // [{id, query, savedAt, data}] — persisted in localStorage
   currentPanel: "chat",
-  enableMetrics: false,
+  enableMetrics: true,
   selectedModelId: "",
   recognition: null,
   micPhase: "idle",

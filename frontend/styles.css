@@ -1296,10 +1296,10 @@ body { background: var(--bg); color: var(--text); }
    Glossary inline source link
    ============================================================ */
 .msgGlossarySource {
-  margin-left: 5px;
-  font-size: 0.73rem; color: var(--text3);
-  text-decoration: none; opacity: 0.7;
-  transition: opacity 0.15s;
+  margin-left: 6px;
+  font-size: 1.1rem; font-weight: 900; color: #ffffff;
+  text-decoration: none; opacity: 0.9;
+  transition: opacity 0.15s, color 0.15s;
 }
 .msgGlossarySource:hover { opacity: 1; color: #93c5fd; }
 
