@@ -325,6 +325,7 @@ function stopGame() {
 // ---------------------------------------------------------------------------
 function setBusy(busy, msg="") {
   $("#submitBtn").prop("disabled", busy);
+  $("#newChatBtn").prop("disabled", busy).toggleClass("dimmed", busy);
   $("#progress").toggleClass("hidden", !busy);
   if (busy) { startProgress(); startTips(msg); startGame(); }
   else { stopProgress(); stopTips(); stopGame(); }
@@ -668,8 +669,7 @@ function renderQuizStep() {
     choices.forEach(choice => {
       $("<button>").addClass("quizChoiceBtn").text(choice)
         .on("click", function() {
-          const isCorrect = choice.trim() === correctAnswer ||
-                            correctAnswer.toLowerCase().includes(choice.trim().toLowerCase().slice(0, 12));
+          const isCorrect = choice.trim() === correctAnswer;
           $(this).addClass(isCorrect ? "correct" : "wrong");
           if (!isCorrect) {
             $opts.find(".quizChoiceBtn").filter(function() {

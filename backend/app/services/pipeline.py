@@ -464,7 +464,7 @@ async def simplify_pipeline(
     # ── Step 5: Source citation setup ─────────────────────────────────────────
     # Only cite an article as the source if it is clearly about the same topic.
     # Low-scoring articles may be used for synthesis context but not shown as sources.
-    _SOURCE_MIN_SCORE = 0.30
+    _SOURCE_MIN_SCORE = 0.08
     if _best_article and _best_score < _SOURCE_MIN_SCORE:
         logger.info(
             "source suppressed: article=%r score=%.3f < %.2f",

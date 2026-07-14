@@ -222,6 +222,7 @@ body { background: var(--bg); color: var(--text); }
   overflow: hidden;
 }
 .newChatBtn:hover { background: var(--purple2); }
+.newChatBtn.dimmed { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
 
 /* Footer links */
 .sidebarFooter {
