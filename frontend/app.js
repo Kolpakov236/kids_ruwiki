@@ -1054,6 +1054,7 @@ function newChat() {
 function switchSession(idx) {
   if (idx === state.currentIdx) { switchPanel("chat"); return; }
   if (idx < 0 || idx >= state.sessions.length) return;
+  if ($("#submitBtn").prop("disabled")) return; // block during pending request
 
   // Save current session
   if (state.currentIdx >= 0 && state.currentIdx < state.sessions.length) {
