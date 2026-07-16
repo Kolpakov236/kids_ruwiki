@@ -485,10 +485,6 @@ function addAssistantMessage(data) {
       const $gItem = $("<div>").addClass("msgGlossaryItem")
         .append($("<span>").addClass("msgGlossaryTerm").text(term + " "))
         .append(document.createTextNode("— " + def));
-      // Source link for the term
-      const termHref = RUWIKI_BASE + encodeURIComponent(item.term);
-      $("<a>").addClass("msgGlossarySource").attr({ href: termHref, target: "_blank", rel: "noreferrer" })
-        .text("↗").appendTo($gItem);
       $gItem.appendTo($gBox);
     });
     $body.append($gSec);
@@ -507,14 +503,31 @@ function addAssistantMessage(data) {
     $body.append($tSec);
   }
 
-  // Sources — only the main article source (not per-term, those are inline above)
+  // Articles section — main source + glossary term links as buttons
+  const _articleLinks = [];
   if (data.source_url) {
+    _articleLinks.push({ label: data.source_title || "Статья в Рувики", href: data.source_url, main: true });
+  }
+  if (data.glossary?.length) {
+    data.glossary.forEach(item => {
+      const term = _stripEmoji(item.term || "").trim();
+      if (!term) return;
+      const href = RUWIKI_BASE + encodeURIComponent(term);
+      if (!_articleLinks.some(l => l.href === href)) {
+        _articleLinks.push({ label: term, href, main: false });
+      }
+    });
+  }
+  if (_articleLinks.length) {
     const $sSec = $("<div>").addClass("msgSection");
-    $("<div>").addClass("msgSectionTitle").text("Источник").appendTo($sSec);
-    const $sRow = $("<div>").addClass("msgSources").appendTo($sSec);
-    $("<a>").addClass("msgSourceLink")
-      .attr({ href: data.source_url, target: "_blank", rel: "noreferrer" })
-      .text(data.source_title || "Статья в Рувики").appendTo($sRow);
+    $("<div>").addClass("msgSectionTitle").text("Статьи в Рувики").appendTo($sSec);
+    const $sRow = $("<div>").addClass("msgArticleLinks").appendTo($sSec);
+    _articleLinks.forEach(({ label, href, main }) => {
+      $("<a>").addClass("msgArticleBtn" + (main ? " msgArticleBtnMain" : ""))
+        .attr({ href, target: "_blank", rel: "noreferrer" })
+        .html(`<span class="msgArticleBtnIcon">📖</span>${$("<span>").text(label).html()}`)
+        .appendTo($sRow);
+    });
     $body.append($sSec);
   }
 

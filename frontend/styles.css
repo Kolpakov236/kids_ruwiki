@@ -637,6 +637,38 @@ body { background: var(--bg); color: var(--text); }
 }
 .msgSourceLink:hover { background: rgba(147,197,253,0.1); }
 
+.msgArticleLinks { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+.msgArticleBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  background: var(--bg3);
+  color: var(--text2);
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.msgArticleBtn:hover {
+  background: rgba(167,139,250,0.12);
+  border-color: rgba(167,139,250,0.4);
+  color: #c4b5fd;
+}
+.msgArticleBtnMain {
+  border-color: rgba(147,197,253,0.35);
+  color: #93c5fd;
+  font-weight: 700;
+}
+.msgArticleBtnMain:hover {
+  background: rgba(147,197,253,0.1);
+  border-color: rgba(147,197,253,0.6);
+  color: #bae6fd;
+}
+.msgArticleBtnIcon { font-size: 0.85rem; }
+
 .msgActions {
   display: flex;
   flex-wrap: wrap;
